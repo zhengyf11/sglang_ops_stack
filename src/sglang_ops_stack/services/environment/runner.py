@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from typing import Protocol
 
 from sqlalchemy.orm import Session
@@ -101,6 +102,7 @@ class EnvironmentCheckRunner:
         self.resume_step: str | None = None
         self.risk_notice: str | None = None
         self._step_commands: dict[str, list[dict[str, object]]] = {}
+        self._current_step_id: str | None = None
 
     def check(self) -> None:
         job_service.mark_running(self.db, self.job)
@@ -177,20 +179,40 @@ class EnvironmentCheckRunner:
         job_service.mark_succeeded(self.db, self.job)
 
     def _execute(self, spec: CommandSpec, step_id: str) -> CommandResult:
+        self._current_step_id = step_id
         self._log("info", f"Executing {spec.id}: {spec.description}")
-        result = self.executor.execute_spec(
-            host=self.host.ip,
-            port=self.host.ssh_port,
-            username=self.host.ssh_user,
-            password=self.password,
-            spec=spec,
-        )
-        command = self._command_result(spec, result)
-        self._step_commands.setdefault(step_id, []).append(command)
-        self._log_result(spec, result)
+        try:
+            result = self.executor.execute_spec(
+                host=self.host.ip,
+                port=self.host.ssh_port,
+                username=self.host.ssh_user,
+                password=self.password,
+                spec=spec,
+            )
+        except SSHCommandTimeoutError as exc:
+            now = datetime.now(UTC)
+            result = CommandResult(
+                exit_code=124,
+                stdout="",
+                stderr=str(exc) or f"Command timed out: {spec.id}",
+                timed_out=True,
+                started_at=now,
+                finished_at=now,
+            )
+            self._record_command(step_id, spec, result)
+            raise _EnvFailure(
+                EnvironmentErrorCode.COMMAND_TIMEOUT,
+                str(exc) or f"Command timed out: {spec.id}",
+            ) from exc
+        self._record_command(step_id, spec, result)
         if result.timed_out:
             raise _EnvFailure(EnvironmentErrorCode.COMMAND_TIMEOUT, f"Command timed out: {spec.id}")
         return result
+
+    def _record_command(self, step_id: str, spec: CommandSpec, result: CommandResult) -> None:
+        command = self._command_result(spec, result)
+        self._step_commands.setdefault(step_id, []).append(command)
+        self._log_result(spec, result)
 
     def _command_result(self, spec: CommandSpec, result: CommandResult) -> dict[str, object]:
         return {
@@ -441,7 +463,23 @@ class EnvironmentCheckRunner:
             result["risk_notice"] = self.risk_notice
         return result
 
+    def _append_timeout_step(self) -> None:
+        step_id = self._current_step_id
+        if step_id is None or any(step["id"] == step_id for step in self.steps):
+            return
+        self.steps.append(
+            _step(
+                step_id,
+                "failed",
+                "Remote command timed out",
+                EnvironmentErrorCode.COMMAND_TIMEOUT,
+                self._commands(step_id),
+            )
+        )
+
     def _fail(self, error_code: str | EnvironmentErrorCode, message: str) -> None:
+        if str(error_code) == EnvironmentErrorCode.COMMAND_TIMEOUT:
+            self._append_timeout_step()
         self.host.last_check_status = "failed"
         self.db.add(self.host)
         self.db.commit()
