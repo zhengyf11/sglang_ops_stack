@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Hosts{% endblock %}
+{% block content %}
+<h2>Hosts</h2>
+<p><a class="button" href="/hosts/new">Create host</a></p>
+<table>
+  <thead><tr><th>Name</th><th>Host</th><th>User</th><th>Status</th><th>Actions</th></tr></thead>
+  <tbody>
+  {% for host in hosts %}
+    <tr>
+      <td><a href="/hosts/{{ host.id }}">{{ host.name }}</a></td>
+      <td>{{ host.ip }}:{{ host.ssh_port }}</td>
+      <td>{{ host.ssh_user }}</td>
+      <td>{{ host.last_check_status or "not checked" }}</td>
+      <td>
+        <a href="/hosts/{{ host.id }}/edit">edit</a>
+        <form method="post" action="/hosts/{{ host.id }}/delete" class="inline">
+          <button type="submit">delete</button>
+        </form>
+      </td>
+    </tr>
+  {% else %}
+    <tr><td colspan="5">No hosts yet.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

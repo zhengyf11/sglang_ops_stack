@@ -1,6 +1,10 @@
 from sglang_ops_stack.remote.command_spec import CommandRisk, CommandSpec
 
 CUDA_TEST_IMAGE = "nvidia/cuda:12.4.1-base-ubuntu22.04"
+NVIDIA_CONTAINER_TOOLKIT_REPO = (
+    "deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] "
+    "https://nvidia.github.io/libnvidia-container/stable/deb/$(ARCH) /\n"
+)
 
 
 class HostCheckCommandBuilder:
@@ -120,6 +124,61 @@ class HostCheckCommandBuilder:
 
     def configure_nvidia_runtime(self) -> list[CommandSpec]:
         return [
+            CommandSpec(
+                id="nvidia_runtime.keyring_dir",
+                executable="install",
+                args=("-d", "-m", "0755", "/usr/share/keyrings"),
+                sudo=True,
+                timeout_seconds=30,
+                risk=CommandRisk.package_install,
+                description="Create apt keyring directory for NVIDIA Container Toolkit repository",
+            ),
+            CommandSpec(
+                id="nvidia_runtime.download_gpg_key",
+                executable="curl",
+                args=(
+                    "-fsSL",
+                    "-o",
+                    "/tmp/nvidia-container-toolkit-keyring.asc",
+                    "https://nvidia.github.io/libnvidia-container/gpgkey",
+                ),
+                timeout_seconds=60,
+                risk=CommandRisk.package_install,
+                description="Download NVIDIA Container Toolkit repository signing key",
+            ),
+            CommandSpec(
+                id="nvidia_runtime.install_gpg_keyring",
+                executable="gpg",
+                args=(
+                    "--dearmor",
+                    "-o",
+                    "/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg",
+                    "/tmp/nvidia-container-toolkit-keyring.asc",
+                ),
+                sudo=True,
+                timeout_seconds=60,
+                risk=CommandRisk.package_install,
+                description="Install NVIDIA Container Toolkit apt signing keyring",
+            ),
+            CommandSpec(
+                id="nvidia_runtime.write_repo_list",
+                executable="tee",
+                args=("/etc/apt/sources.list.d/nvidia-container-toolkit.list",),
+                sudo=True,
+                timeout_seconds=30,
+                risk=CommandRisk.package_install,
+                description="Write NVIDIA Container Toolkit apt repository list",
+                stdin=NVIDIA_CONTAINER_TOOLKIT_REPO,
+            ),
+            CommandSpec(
+                id="nvidia_runtime.apt_update",
+                executable="apt-get",
+                args=("update",),
+                sudo=True,
+                timeout_seconds=120,
+                risk=CommandRisk.package_install,
+                description="Refresh apt package index after adding NVIDIA Container Toolkit repository",
+            ),
             CommandSpec(
                 id="nvidia_runtime.install_toolkit",
                 executable="apt-get",
