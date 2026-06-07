@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Edit host{% endblock %}
+{% block content %}
+<h2>Edit {{ host.name }}</h2>
+<form method="post" action="/hosts/{{ host.id }}">
+  <label>Name <input name="name" value="{{ host.name }}" required></label>
+  <label>IP / hostname <input name="ip" value="{{ host.ip }}" required></label>
+  <label>SSH port <input name="ssh_port" type="number" min="1" max="65535" value="{{ host.ssh_port }}" required></label>
+  <label>SSH user <input name="ssh_user" value="{{ host.ssh_user }}" required></label>
+  <label>Tags <input name="tags" value="{{ host.tags or '' }}"></label>
+  <label>Note <textarea name="note">{{ host.note or '' }}</textarea></label>
+  <button type="submit">Save</button>
+</form>
+{% endblock %}
