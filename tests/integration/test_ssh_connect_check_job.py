@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 from sqlalchemy.orm import Session
 
 from sglang_ops_stack.api.schemas.host import HostCreate
+from sglang_ops_stack.db.models.host import Host
 from sglang_ops_stack.remote.executor import SSHAuthError
 from sglang_ops_stack.remote.result import CommandResult
 from sglang_ops_stack.services import host_service, job_service
@@ -113,3 +114,39 @@ def test_gpu_probe_failure_does_not_fail_job(db_session: Session) -> None:
     assert host is not None and host.last_check_status == "succeeded"
     assert job is not None and job.status == "succeeded"
     assert any(log.level == "warning" for log in logs)
+
+
+def test_missing_host_marks_job_failed_and_masks_secret(db_session: Session) -> None:
+    host_id, job_id = _host_and_job(db_session)
+    host = db_session.get(Host, host_id)
+    assert host is not None
+    db_session.delete(host)
+    db_session.commit()
+
+    run_ssh_connect_check(
+        db_session,
+        job_id=job_id,
+        password="super-secret",
+        executor=FakeSuccessExecutor(),
+    )
+
+    job = job_service.get_job(db_session, job_id)
+    logs = job_service.list_logs(db_session, job_id)
+    assert job is not None
+    assert job.status == "failed"
+    assert job.error_code == "host_not_found"
+    assert "super-secret" not in (job.error_message or "")
+    assert any("host" in log.message and "not found" in log.message for log in logs)
+    assert all("super-secret" not in log.message for log in logs)
+
+
+def test_missing_job_does_not_raise_or_create_logs(db_session: Session) -> None:
+    run_ssh_connect_check(
+        db_session,
+        job_id=999,
+        password="super-secret",
+        executor=FakeSuccessExecutor(),
+    )
+
+    assert job_service.get_job(db_session, 999) is None
+    assert list(job_service.list_logs(db_session, 999)) == []

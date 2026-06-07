@@ -1,4 +1,6 @@
+import time
 from datetime import UTC, datetime
+from typing import Any
 
 import paramiko
 
@@ -51,16 +53,22 @@ class SSHExecutor:
                 look_for_keys=False,
                 allow_agent=False,
             )
-            stdin, stdout, stderr = client.exec_command(
+            command_timeout = self.command_timeout if timeout is None else timeout
+            stdin, stdout, _stderr = client.exec_command(
                 command,
-                timeout=timeout or self.command_timeout,
+                timeout=command_timeout,
             )
             stdin.close()
-            exit_code = stdout.channel.recv_exit_status()
+            channel = stdout.channel
+            stdout_bytes, stderr_bytes, exit_code = self._read_channel(
+                channel,
+                timeout=command_timeout,
+                client=client,
+            )
             return CommandResult(
                 exit_code=exit_code,
-                stdout=stdout.read().decode(errors="replace"),
-                stderr=stderr.read().decode(errors="replace"),
+                stdout=stdout_bytes.decode(errors="replace"),
+                stderr=stderr_bytes.decode(errors="replace"),
                 timed_out=False,
                 started_at=started_at,
                 finished_at=datetime.now(UTC),
@@ -76,3 +84,35 @@ class SSHExecutor:
             raise SSHExecutionError(message) from exc
         finally:
             client.close()
+
+    def _read_channel(
+        self,
+        channel: Any,
+        *,
+        timeout: float,
+        client: paramiko.SSHClient,
+    ) -> tuple[bytes, bytes, int]:
+        stdout_chunks: list[bytes] = []
+        stderr_chunks: list[bytes] = []
+        deadline = time.monotonic() + timeout
+
+        while True:
+            while channel.recv_ready():
+                stdout_chunks.append(channel.recv(32768))
+            while channel.recv_stderr_ready():
+                stderr_chunks.append(channel.recv_stderr(32768))
+
+            if channel.exit_status_ready():
+                exit_code = channel.recv_exit_status()
+                while channel.recv_ready():
+                    stdout_chunks.append(channel.recv(32768))
+                while channel.recv_stderr_ready():
+                    stderr_chunks.append(channel.recv_stderr(32768))
+                return b"".join(stdout_chunks), b"".join(stderr_chunks), exit_code
+
+            if time.monotonic() >= deadline:
+                channel.close()
+                client.close()
+                raise SSHCommandTimeoutError(f"SSH command timed out after {timeout:g}s")
+
+            time.sleep(min(0.05, max(0.0, deadline - time.monotonic())))

@@ -36,3 +36,20 @@ def test_task_wrapper_opens_independent_session_and_passes_settings(monkeypatch)
         command_timeout=9.5,
     )
     assert session.closed is True
+
+
+def test_task_wrapper_swallows_runner_exceptions(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    session = DummySession()
+    runner = MagicMock(side_effect=RuntimeError("background failed with super-secret"))
+    monkeypatch.setattr(ssh_connect_check, "SessionLocal", lambda: session)
+    monkeypatch.setattr(
+        ssh_connect_check,
+        "get_settings",
+        lambda: SimpleNamespace(ssh_connect_timeout=3.5, ssh_command_timeout=9.5),
+    )
+    monkeypatch.setattr(ssh_connect_check, "run_ssh_connect_check", runner)
+
+    ssh_connect_check.run_ssh_connect_check_task(42, "super-secret")
+
+    runner.assert_called_once()
+    assert session.closed is True

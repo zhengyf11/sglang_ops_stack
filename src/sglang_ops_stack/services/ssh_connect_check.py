@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from sglang_ops_stack.config import get_settings
 from sglang_ops_stack.db.models.host import Host
+from sglang_ops_stack.db.models.job import Job
 from sglang_ops_stack.db.session import SessionLocal
 from sglang_ops_stack.remote.executor import SSHExecutionError, SSHExecutor
 from sglang_ops_stack.remote.result import CommandResult
@@ -67,16 +68,49 @@ def _log_result(
     job_service.add_log(db, job_id=job_id, level=level, message=message, secrets=[password])
 
 
+def _mark_host_failed(db: Session, host: Host | None) -> None:
+    if host is None:
+        return
+    host.last_check_status = "failed"
+    host.last_check_at = datetime.now(UTC)
+    db.add(host)
+    db.commit()
+
+
+def _fail_job(
+    db: Session,
+    job: Job,
+    *,
+    error_code: str,
+    error_message: str,
+    secrets: list[str],
+) -> None:
+    message = mask_secret(error_message, secrets)
+    job_service.add_log(db, job_id=job.id, level="error", message=message, secrets=secrets)
+    job_service.mark_failed(
+        db,
+        job,
+        error_code=error_code,
+        error_message=message,
+        secrets=secrets,
+    )
+
+
 def run_ssh_connect_check_task(job_id: int, password: str) -> None:
     settings = get_settings()
     with SessionLocal() as db:
-        run_ssh_connect_check(
-            db,
-            job_id=job_id,
-            password=password,
-            connect_timeout=settings.ssh_connect_timeout,
-            command_timeout=settings.ssh_command_timeout,
-        )
+        try:
+            run_ssh_connect_check(
+                db,
+                job_id=job_id,
+                password=password,
+                connect_timeout=settings.ssh_connect_timeout,
+                command_timeout=settings.ssh_command_timeout,
+            )
+        except Exception:
+            rollback = getattr(db, "rollback", None)
+            if rollback is not None:
+                rollback()
 
 
 def run_ssh_connect_check(
@@ -88,18 +122,25 @@ def run_ssh_connect_check(
     connect_timeout: float = 10.0,
     command_timeout: float = 30.0,
 ) -> None:
+    secrets = [password]
     job = job_service.get_job(db, job_id)
     if job is None:
-        raise ValueError(f"job {job_id} not found")
+        return
     host = db.get(Host, job.target_id)
     if host is None:
-        raise ValueError(f"host {job.target_id} not found")
+        _fail_job(
+            db,
+            job,
+            error_code="host_not_found",
+            error_message=f"host {job.target_id} not found",
+            secrets=secrets,
+        )
+        return
 
     executor = executor or SSHExecutor(
         connect_timeout=connect_timeout,
         command_timeout=command_timeout,
     )
-    secrets = [password]
     job_service.mark_running(db, job)
     job_service.add_log(
         db,
@@ -146,31 +187,11 @@ def run_ssh_connect_check(
         )
         job_service.mark_succeeded(db, job)
     except SSHExecutionError as exc:
-        host.last_check_status = "failed"
-        host.last_check_at = datetime.now(UTC)
-        db.add(host)
-        db.commit()
+        _mark_host_failed(db, host)
         error_code = getattr(exc, "error_code", "ssh_error")
-        message = mask_secret(str(exc) or "SSH connectivity check failed", secrets)
-        job_service.add_log(db, job_id=job.id, level="error", message=message, secrets=secrets)
-        job_service.mark_failed(
-            db,
-            job,
-            error_code=error_code,
-            error_message=message,
-            secrets=secrets,
-        )
+        message = str(exc) or "SSH connectivity check failed"
+        _fail_job(db, job, error_code=error_code, error_message=message, secrets=secrets)
     except Exception as exc:
-        host.last_check_status = "failed"
-        host.last_check_at = datetime.now(UTC)
-        db.add(host)
-        db.commit()
-        message = mask_secret(str(exc) or "Unexpected SSH connectivity check failure", secrets)
-        job_service.add_log(db, job_id=job.id, level="error", message=message, secrets=secrets)
-        job_service.mark_failed(
-            db,
-            job,
-            error_code="ssh_error",
-            error_message=message,
-            secrets=secrets,
-        )
+        _mark_host_failed(db, host)
+        message = str(exc) or "Unexpected SSH connectivity check failure"
+        _fail_job(db, job, error_code="ssh_error", error_message=message, secrets=secrets)
