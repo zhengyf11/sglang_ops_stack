@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Job {{ job.id }}{% endblock %}
+{% block content %}
+<h2>Job #{{ job.id }}</h2>
+<dl>
+  <dt>Type</dt><dd>{{ job.type }}</dd>
+  <dt>Status</dt><dd>{{ job.status }}</dd>
+  <dt>Target</dt><dd>{{ job.target_type }} #{{ job.target_id }}</dd>
+  <dt>Error</dt><dd>{{ job.error_message or "-" }}</dd>
+</dl>
+{% if job.status in ["pending", "running"] %}<p><a href="/jobs/{{ job.id }}">Refresh</a></p>{% endif %}
+<h3>Logs</h3>
+<ol>
+{% for log in logs %}
+  <li><strong>{{ log.level }}</strong> {{ log.created_at }} <pre>{{ log.message }}</pre></li>
+{% else %}
+  <li>No logs yet.</li>
+{% endfor %}
+</ol>
+{% endblock %}

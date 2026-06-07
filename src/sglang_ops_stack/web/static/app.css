@@ -1,0 +1,11 @@
+body { font-family: system-ui, sans-serif; max-width: 960px; margin: 2rem auto; padding: 0 1rem; }
+header { border-bottom: 1px solid #ddd; margin-bottom: 1.5rem; padding-bottom: 1rem; }
+a { color: #0b5cad; }
+table { border-collapse: collapse; width: 100%; }
+th, td { border: 1px solid #ddd; padding: 0.5rem; text-align: left; }
+label { display: block; margin: 0.75rem 0; }
+input, textarea { display: block; width: 100%; max-width: 32rem; padding: 0.4rem; }
+button, .button { padding: 0.4rem 0.7rem; }
+.inline { display: inline; }
+.hint { color: #666; }
+pre { white-space: pre-wrap; }

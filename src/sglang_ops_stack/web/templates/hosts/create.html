@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Create host{% endblock %}
+{% block content %}
+<h2>Create host</h2>
+<form method="post" action="/hosts">
+  <label>Name <input name="name" required></label>
+  <label>IP / hostname <input name="ip" required></label>
+  <label>SSH port <input name="ssh_port" type="number" min="1" max="65535" value="22" required></label>
+  <label>SSH user <input name="ssh_user" value="root" required></label>
+  <label>Tags <input name="tags"></label>
+  <label>Note <textarea name="note"></textarea></label>
+  <button type="submit">Create</button>
+</form>
+{% endblock %}

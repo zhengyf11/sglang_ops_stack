@@ -1,2 +1,10 @@
 .worktree
 .relay/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+sglang_ops_stack.db
+.env
