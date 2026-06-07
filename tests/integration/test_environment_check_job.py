@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 
 from sglang_ops_stack.api.schemas.host import HostCreate
 from sglang_ops_stack.remote.command_spec import CommandSpec
+from sglang_ops_stack.remote.executor import SSHCommandTimeoutError
 from sglang_ops_stack.remote.result import CommandResult
 from sglang_ops_stack.services import host_service, job_service
 from sglang_ops_stack.services.environment.error_codes import EnvironmentErrorCode
@@ -28,6 +29,19 @@ class FakeEnvironmentExecutor:
     def execute_spec(self, *, spec: CommandSpec, **kwargs: object) -> CommandResult:
         self.spec_ids.append(spec.id)
         self.specs.append(spec)
+        return self.responses.get(spec.id, result("", "missing", 127))
+
+
+class TimeoutRaisingExecutor(FakeEnvironmentExecutor):
+    def __init__(self, responses: dict[str, CommandResult], timeout_spec_id: str) -> None:
+        super().__init__(responses)
+        self.timeout_spec_id = timeout_spec_id
+
+    def execute_spec(self, *, spec: CommandSpec, **kwargs: object) -> CommandResult:
+        self.spec_ids.append(spec.id)
+        self.specs.append(spec)
+        if spec.id == self.timeout_spec_id:
+            raise SSHCommandTimeoutError(f"SSH command timed out: {spec.id}")
         return self.responses.get(spec.id, result("", "missing", 127))
 
 
@@ -220,10 +234,17 @@ def test_runtime_verify_failure_uses_documented_error_code(db_session: Session) 
     assert job.error_code == EnvironmentErrorCode.RUNTIME_VERIFY_FAILED
 
 
-def test_command_timeout_uses_documented_error_code(db_session: Session) -> None:
+def test_command_result_timeout_records_failed_step_and_masked_command_output(
+    db_session: Session,
+) -> None:
     _host_id, job_id = _host_and_job(db_session)
     responses = healthy_responses()
-    responses["gpu.lspci"] = result("", "timeout password=super-secret", 124, timed_out=True)
+    responses["gpu.lspci"] = result(
+        "partial password=super-secret",
+        "timeout password=super-secret",
+        124,
+        timed_out=True,
+    )
 
     run_environment_check(
         db_session,
@@ -236,6 +257,41 @@ def test_command_timeout_uses_documented_error_code(db_session: Session) -> None
     assert job is not None and job.status == "failed"
     assert job.error_code == EnvironmentErrorCode.COMMAND_TIMEOUT
     assert "super-secret" not in (job.error_message or "")
+    assert job.result is not None
+    gpu_step = next(step for step in job.result["steps"] if step["id"] == "gpu")
+    assert gpu_step["status"] == "failed"
+    assert gpu_step["error_code"] == EnvironmentErrorCode.COMMAND_TIMEOUT
+    assert gpu_step["commands"][0]["id"] == "gpu.lspci"
+    assert gpu_step["commands"][0]["timed_out"] is True
+    assert gpu_step["commands"][0]["stdout"] == "partial password=***"
+    assert gpu_step["commands"][0]["stderr"] == "timeout password=***"
+    assert "super-secret" not in str(job.result)
+
+
+def test_ssh_command_timeout_exception_records_current_step_command_shell(
+    db_session: Session,
+) -> None:
+    _host_id, job_id = _host_and_job(db_session)
+    executor = TimeoutRaisingExecutor(healthy_responses(), "gpu.lspci")
+
+    run_environment_check(
+        db_session,
+        job_id=job_id,
+        password="super-secret",
+        executor=executor,
+    )
+
+    job = job_service.get_job(db_session, job_id)
+    assert job is not None and job.status == "failed"
+    assert job.error_code == EnvironmentErrorCode.COMMAND_TIMEOUT
+    assert job.result is not None
+    gpu_step = next(step for step in job.result["steps"] if step["id"] == "gpu")
+    assert gpu_step["status"] == "failed"
+    assert gpu_step["error_code"] == EnvironmentErrorCode.COMMAND_TIMEOUT
+    assert gpu_step["commands"][0]["id"] == "gpu.lspci"
+    assert gpu_step["commands"][0]["timed_out"] is True
+    assert gpu_step["commands"][0]["stdout"] == ""
+    assert "SSH command timed out" in gpu_step["commands"][0]["stderr"]
 
 
 def test_environment_executor_protocol_requires_command_spec() -> None:
