@@ -14,9 +14,15 @@ def utc_now() -> datetime:
     return datetime.now(UTC)
 
 
-def create_job(db: Session, *, target_id: int) -> Job:
+def create_job(
+    db: Session,
+    *,
+    target_id: int,
+    job_type: str | JobType = JobType.ssh_connect_check,
+) -> Job:
+    type_value = job_type.value if isinstance(job_type, JobType) else job_type
     job = Job(
-        type=JobType.ssh_connect_check.value,
+        type=type_value,
         status=JobStatus.pending.value,
         target_type=TargetType.host.value,
         target_id=target_id,
@@ -29,6 +35,14 @@ def create_job(db: Session, *, target_id: int) -> Job:
 
 def get_job(db: Session, job_id: int) -> Job | None:
     return db.get(Job, job_id)
+
+
+def save_result(db: Session, job: Job, result: dict[str, object] | None) -> Job:
+    job.result = result
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+    return job
 
 
 def list_logs(db: Session, job_id: int) -> Sequence[JobLog]:
@@ -62,6 +76,31 @@ def mark_running(db: Session, job: Job) -> Job:
 def mark_succeeded(db: Session, job: Job) -> Job:
     job.status = JobStatus.succeeded.value
     job.finished_at = utc_now()
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+    return job
+
+
+def mark_waiting_confirmation(
+    db: Session,
+    job: Job,
+    *,
+    result: dict[str, object] | None = None,
+) -> Job:
+    job.status = JobStatus.waiting_confirmation.value
+    job.result = result
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+    return job
+
+
+def reset_for_retry(db: Session, job: Job) -> Job:
+    job.status = JobStatus.pending.value
+    job.error_code = None
+    job.error_message = None
+    job.finished_at = None
     db.add(job)
     db.commit()
     db.refresh(job)

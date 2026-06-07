@@ -4,8 +4,11 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from sglang_ops_stack.api.schemas.host import HostCreate, HostRead, HostUpdate, SSHCheckRequest
+from sglang_ops_stack.api.schemas.job import JobPasswordRequest
 from sglang_ops_stack.db.session import get_db
+from sglang_ops_stack.domain_enums import JobType
 from sglang_ops_stack.services import host_service, job_service
+from sglang_ops_stack.services.environment.runner import run_environment_check_task
 from sglang_ops_stack.services.ssh_connect_check import run_ssh_connect_check_task
 
 router = APIRouter(prefix="/api/hosts", tags=["hosts"])
@@ -59,4 +62,19 @@ def start_ssh_check(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Host not found")
     job = job_service.create_job(db, target_id=host_id)
     background_tasks.add_task(run_ssh_connect_check_task, job.id, payload.password)
+    return {"job_id": job.id, "status": job.status}
+
+
+@router.post("/{host_id}/environment/check")
+def start_environment_check(
+    host_id: int,
+    payload: JobPasswordRequest,
+    background_tasks: BackgroundTasks,
+    db: DbSession,
+) -> dict[str, int | str]:
+    host = host_service.get_host(db, host_id)
+    if host is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Host not found")
+    job = job_service.create_job(db, target_id=host_id, job_type=JobType.environment_check)
+    background_tasks.add_task(run_environment_check_task, job.id, payload.password)
     return {"job_id": job.id, "status": job.status}

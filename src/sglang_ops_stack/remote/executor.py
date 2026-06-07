@@ -4,6 +4,7 @@ from typing import Any
 
 import paramiko
 
+from sglang_ops_stack.remote.command_spec import CommandSpec
 from sglang_ops_stack.remote.result import CommandResult
 
 
@@ -27,6 +28,25 @@ class SSHExecutor:
     def __init__(self, connect_timeout: float = 10.0, command_timeout: float = 30.0) -> None:
         self.connect_timeout = connect_timeout
         self.command_timeout = command_timeout
+
+    def execute_spec(
+        self,
+        *,
+        host: str,
+        port: int,
+        username: str,
+        password: str,
+        spec: CommandSpec,
+    ) -> CommandResult:
+        spec.validate()
+        return self.run(
+            host=host,
+            port=port,
+            username=username,
+            password=password,
+            command=spec.command_line(),
+            timeout=spec.timeout_seconds,
+        )
 
     def run(
         self,
