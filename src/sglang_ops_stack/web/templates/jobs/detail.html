@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}Job {{ job.id }}{% endblock %}
+{% block content %}
+<h2>Job #{{ job.id }}</h2>
+<dl>
+  <dt>Type</dt><dd>{{ job.type }}</dd>
+  <dt>Status</dt><dd>{{ job.status }}</dd>
+  <dt>Target</dt><dd>{{ job.target_type }} #{{ job.target_id }}</dd>
+  <dt>Error code</dt><dd>{{ job.error_code or "-" }}</dd>
+  <dt>Error</dt><dd>{{ job.error_message or "-" }}</dd>
+</dl>
+{% if job.status in ["pending", "running", "waiting_confirmation"] %}<p><a href="/jobs/{{ job.id }}">Refresh</a></p>{% endif %}
+
+{% if job.result and job.result.steps %}
+<section>
+  <h3>Environment steps</h3>
+  <ol>
+  {% for step in job.result.steps %}
+    <li>
+      <strong>{{ step.name }}</strong> — {{ step.status }}
+      {% if step.error_code %}<code>{{ step.error_code }}</code>{% endif %}
+      <p>{{ step.summary }}</p>
+    </li>
+  {% endfor %}
+  </ol>
+</section>
+{% endif %}
+
+{% if job.result and job.result.install_plan %}
+<section>
+  <h3>Installation plan</h3>
+  <p class="hint">Risk confirmation is required before any package installation, service change, Docker runtime configuration, or CUDA test container run.</p>
+  <ul>
+  {% for item in job.result.install_plan %}
+    <li><strong>{{ item.id }}</strong> — {{ item.description }} <code>{{ item.risk }}</code><pre>{{ item.command }}</pre></li>
+  {% endfor %}
+  </ul>
+  {% if job.status == "waiting_confirmation" %}
+  <h4>Confirm installation</h4>
+  <form method="post" action="/jobs/{{ job.id }}/confirm-install">
+    <label>Session password <input type="password" name="password" autocomplete="current-password" required></label>
+    <label><input type="checkbox" name="confirmed" value="yes" required> I understand this may install packages, change services, configure Docker NVIDIA runtime, and run a CUDA GPU test container.</label>
+    <button type="submit">Confirm installation</button>
+  </form>
+  {% endif %}
+</section>
+{% endif %}
+
+{% if job.status == "failed" and job.type == "environment_check" %}
+<section>
+  <h3>Retry</h3>
+  <form method="post" action="/jobs/{{ job.id }}/retry">
+    <label>Session password <input type="password" name="password" autocomplete="current-password" required></label>
+    <button type="submit">Retry environment check</button>
+  </form>
+</section>
+{% endif %}
+
+<h3>Logs</h3>
+<ol>
+{% for log in logs %}
+  <li><strong>{{ log.level }}</strong> {{ log.created_at }} <pre>{{ log.message }}</pre></li>
+{% else %}
+  <li>No logs yet.</li>
+{% endfor %}
+</ol>
+{% endblock %}

@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Host detail{% endblock %}
+{% block content %}
+<h2>{{ host.name }}</h2>
+<dl>
+  <dt>Address</dt><dd>{{ host.ip }}:{{ host.ssh_port }}</dd>
+  <dt>SSH user</dt><dd>{{ host.ssh_user }}</dd>
+  <dt>Auth type</dt><dd>{{ host.auth_type }}</dd>
+  <dt>Tags</dt><dd>{{ host.tags or "-" }}</dd>
+  <dt>Note</dt><dd>{{ host.note or "-" }}</dd>
+  <dt>Last check</dt><dd>{{ host.last_check_status or "not checked" }}</dd>
+  <dt>OS info</dt><dd><pre>{{ host.os_info or "-" }}</pre></dd>
+  <dt>GPU info</dt><dd><pre>{{ host.gpu_info or "-" }}</pre></dd>
+</dl>
+<p><a href="/hosts/{{ host.id }}/edit">Edit host</a></p>
+<section>
+  <h3>SSH connectivity check</h3>
+  <form method="post" action="/hosts/{{ host.id }}/ssh-check">
+    <label>Session password <input type="password" name="password" autocomplete="current-password" required></label>
+    <button type="submit">Run check</button>
+  </form>
+  <p class="hint">Password is used only for this request and is not stored.</p>
+</section>
+<section>
+  <h3>Environment check</h3>
+  <form method="post" action="/hosts/{{ host.id }}/environment/check">
+    <label>Session password <input type="password" name="password" autocomplete="current-password" required></label>
+    <button type="submit">Run environment check</button>
+  </form>
+  <p class="hint">Checks SSH, OS, GPU, driver, Docker, NVIDIA runtime and a CUDA GPU test container. Installation waits for explicit risk confirmation.</p>
+</section>
+{% endblock %}
