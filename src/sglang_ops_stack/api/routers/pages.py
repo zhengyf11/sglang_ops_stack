@@ -8,7 +8,12 @@ from sqlalchemy.orm import Session
 
 from sglang_ops_stack.api.schemas.host import HostCreate, HostUpdate
 from sglang_ops_stack.db.session import get_db
+from sglang_ops_stack.domain_enums import JobStatus, JobType
 from sglang_ops_stack.services import host_service, job_service
+from sglang_ops_stack.services.environment.runner import (
+    confirm_environment_install_task,
+    run_environment_check_task,
+)
 from sglang_ops_stack.services.ssh_connect_check import run_ssh_connect_check_task
 
 TEMPLATE_DIR = Path(__file__).resolve().parents[2] / "web" / "templates"
@@ -130,6 +135,71 @@ def ssh_check_page(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Host not found")
     job = job_service.create_job(db, target_id=host_id)
     background_tasks.add_task(run_ssh_connect_check_task, job.id, password)
+    return _redirect(f"/jobs/{job.id}")
+
+
+@router.post("/hosts/{host_id}/environment/check")
+def environment_check_page(
+    host_id: int,
+    background_tasks: BackgroundTasks,
+    db: DbSession,
+    password: Annotated[str, Form()],
+) -> RedirectResponse:
+    host = host_service.get_host(db, host_id)
+    if host is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Host not found")
+    job = job_service.create_job(db, target_id=host_id, job_type=JobType.environment_check)
+    background_tasks.add_task(run_environment_check_task, job.id, password)
+    return _redirect(f"/jobs/{job.id}")
+
+
+@router.post("/jobs/{job_id}/confirm-install")
+def confirm_install_page(
+    job_id: int,
+    background_tasks: BackgroundTasks,
+    db: DbSession,
+    password: Annotated[str, Form()],
+    confirmed: Annotated[str | None, Form()] = None,
+) -> RedirectResponse:
+    job = job_service.get_job(db, job_id)
+    if job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+    if job.type != JobType.environment_check.value:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Job is not an environment check",
+        )
+    if job.status != JobStatus.waiting_confirmation.value:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Job is not waiting for confirmation",
+        )
+    if confirmed != "yes":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Confirmation is required",
+        )
+    background_tasks.add_task(confirm_environment_install_task, job.id, password, True)
+    return _redirect(f"/jobs/{job.id}")
+
+
+@router.post("/jobs/{job_id}/retry")
+def retry_job_page(
+    job_id: int,
+    background_tasks: BackgroundTasks,
+    db: DbSession,
+    password: Annotated[str, Form()],
+) -> RedirectResponse:
+    job = job_service.get_job(db, job_id)
+    if job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+    if job.type != JobType.environment_check.value:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only environment check jobs can be retried",
+        )
+    job_service.reset_for_retry(db, job)
+    background_tasks.add_task(run_environment_check_task, job.id, password)
     return _redirect(f"/jobs/{job.id}")
 
 

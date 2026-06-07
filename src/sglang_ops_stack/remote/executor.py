@@ -4,6 +4,7 @@ from typing import Any
 
 import paramiko
 
+from sglang_ops_stack.remote.command_spec import CommandSpec
 from sglang_ops_stack.remote.result import CommandResult
 
 
@@ -28,6 +29,26 @@ class SSHExecutor:
         self.connect_timeout = connect_timeout
         self.command_timeout = command_timeout
 
+    def execute_spec(
+        self,
+        *,
+        host: str,
+        port: int,
+        username: str,
+        password: str,
+        spec: CommandSpec,
+    ) -> CommandResult:
+        spec.validate()
+        return self.run(
+            host=host,
+            port=port,
+            username=username,
+            password=password,
+            command=spec.command_line(),
+            timeout=spec.timeout_seconds,
+            stdin=spec.stdin,
+        )
+
     def run(
         self,
         *,
@@ -37,6 +58,7 @@ class SSHExecutor:
         password: str,
         command: str,
         timeout: float | None = None,
+        stdin: str | None = None,
     ) -> CommandResult:
         started_at = datetime.now(UTC)
         client = paramiko.SSHClient()
@@ -54,11 +76,14 @@ class SSHExecutor:
                 allow_agent=False,
             )
             command_timeout = self.command_timeout if timeout is None else timeout
-            stdin, stdout, _stderr = client.exec_command(
+            stdin_stream, stdout, _stderr = client.exec_command(
                 command,
                 timeout=command_timeout,
             )
-            stdin.close()
+            if stdin is not None:
+                stdin_stream.write(stdin)
+                stdin_stream.flush()
+            stdin_stream.close()
             channel = stdout.channel
             stdout_bytes, stderr_bytes, exit_code = self._read_channel(
                 channel,
