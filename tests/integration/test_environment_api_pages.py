@@ -121,3 +121,51 @@ def test_job_page_renders_environment_steps_and_confirmation_form(
     assert "ENV_DOCKER_MISSING" in page.text
     assert "Confirm installation" in page.text
     assert "package_install" in page.text
+
+
+def test_confirm_install_page_rejects_non_environment_job(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    host = host_service.create_host(db_session, HostCreate(name="gpu", ip="10.0.0.1"))
+    job = job_service.create_job(db_session, target_id=host.id)
+
+    response = client.post(
+        f"/jobs/{job.id}/confirm-install",
+        data={"password": "super-secret", "confirmed": "yes"},
+    )
+
+    assert response.status_code == 400
+    assert "environment check" in response.text
+
+
+def test_confirm_install_page_rejects_environment_job_not_waiting_confirmation(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    host = host_service.create_host(db_session, HostCreate(name="gpu", ip="10.0.0.1"))
+    job = job_service.create_job(db_session, target_id=host.id, job_type="environment_check")
+
+    response = client.post(
+        f"/jobs/{job.id}/confirm-install",
+        data={"password": "super-secret", "confirmed": "yes"},
+    )
+
+    assert response.status_code == 400
+    assert "waiting for confirmation" in response.text
+
+
+def test_retry_job_page_rejects_non_environment_job(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    host = host_service.create_host(db_session, HostCreate(name="gpu", ip="10.0.0.1"))
+    job = job_service.create_job(db_session, target_id=host.id)
+
+    response = client.post(
+        f"/jobs/{job.id}/retry",
+        data={"password": "super-secret"},
+    )
+
+    assert response.status_code == 400
+    assert "environment check" in response.text

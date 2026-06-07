@@ -40,7 +40,6 @@ class CommandSpec:
     sudo: bool = False
     timeout_seconds: int = 30
     allowed_exit_codes: tuple[int, ...] = (0,)
-    stdin: str | None = None
     redact_patterns: tuple[str, ...] = ()
     risk: CommandRisk = CommandRisk.read_only
     description: str = ""
