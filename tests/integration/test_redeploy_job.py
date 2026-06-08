@@ -96,6 +96,43 @@ def test_redeploy_plan_masks_diff_and_requires_high_risk_confirmation(db_session
         raise AssertionError("high-risk redeploy should require confirmation")
 
 
+def test_redeploy_rejects_host_id_change(db_session: Session) -> None:
+    _host, deployment = _deployment(db_session)
+    other_host = Host(
+        name="gpu-2",
+        ip="10.0.0.2",
+        ssh_port=22,
+        ssh_user="root",
+        environment_status="READY",
+    )
+    db_session.add(other_host)
+    db_session.commit()
+    payload = DeploymentCreate(
+        host_id=other_host.id,
+        name="demo2",
+        container_name="sglang_demo",
+        image="lmsysorg/sglang:new",
+        model_path="/models/new-secret",
+        port=30001,
+    )
+
+    try:
+        redeploy_service.create_redeploy_job(
+            db_session,
+            deployment,
+            payload,
+            confirm_high_risk=True,
+        )
+    except redeploy_service.RedeployError as exc:
+        assert "host_id" in str(exc)
+    else:
+        raise AssertionError("redeploy should reject host_id changes")
+
+    db_session.refresh(deployment)
+    assert deployment.host_id == _host.id
+    assert deployment.status == "running"
+
+
 def test_redeploy_success_creates_new_revision_after_health_check(db_session: Session) -> None:
     host, deployment = _deployment(db_session)
     old_revision_id = deployment.current_revision_id

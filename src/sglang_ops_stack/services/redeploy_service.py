@@ -100,6 +100,8 @@ def validate_redeploy(
             raise RedeployError(f"deployment is busy: {deployment.status}")
         if deployment.status not in _REDEPLOY_ALLOWED:
             raise RedeployError(f"redeploy is not allowed when status={deployment.status}")
+    if deployment.host_id != payload.host_id:
+        raise RedeployError("redeploy does not support changing host_id")
     plan = plan_redeploy(deployment, payload)
     if plan.high_risk and not confirm_high_risk:
         raise RedeployError("High-risk redeploy requires confirm_high_risk=true")
