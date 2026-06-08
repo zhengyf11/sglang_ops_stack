@@ -15,7 +15,9 @@ from sglang_ops_stack.services.environment.runner import (
 )
 
 
-def result(stdout: str = "", stderr: str = "", exit_code: int = 0, timed_out: bool = False) -> CommandResult:
+def result(
+    stdout: str = "", stderr: str = "", exit_code: int = 0, timed_out: bool = False
+) -> CommandResult:
     now = datetime.now(UTC)
     return CommandResult(exit_code, stdout, stderr, timed_out, now, now)
 
@@ -122,6 +124,29 @@ def test_environment_check_stops_for_docker_install_plan_until_confirmed(
         "docker.enable_now",
     ]
     assert all("install" not in spec_id for spec_id in executor.spec_ids)
+
+
+def test_environment_check_does_not_pass_inactive_docker_service(
+    db_session: Session,
+) -> None:
+    _host_id, job_id = _host_and_job(db_session)
+    responses = healthy_responses()
+    responses["docker.service_active"] = result("inactive\n", exit_code=3)
+
+    run_environment_check(
+        db_session,
+        job_id=job_id,
+        password="super-secret",
+        executor=FakeEnvironmentExecutor(responses),
+    )
+
+    job = job_service.get_job(db_session, job_id)
+    assert job is not None and job.status == "waiting_confirmation"
+    assert job.result is not None
+    docker_step = next(step for step in job.result["steps"] if step["id"] == "docker")
+    assert docker_step["status"] == "waiting_confirmation"
+    assert docker_step["status"] not in {"passed", "skipped"}
+    assert docker_step["error_code"] == EnvironmentErrorCode.DOCKER_NOT_INSTALLED
 
 
 def test_confirm_install_redetects_and_skips_already_fixed_docker(db_session: Session) -> None:

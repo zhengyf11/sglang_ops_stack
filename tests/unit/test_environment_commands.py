@@ -39,7 +39,10 @@ def test_command_spec_allows_controlled_stdin_without_rendering_content_in_summa
         args=("/etc/apt/sources.list.d/nvidia-container-toolkit.list",),
         sudo=True,
         risk=CommandRisk.package_install,
-        stdin="deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://example.invalid /\n",
+        stdin=(
+            "deb [signed-by=/usr/share/keyrings/"
+            "nvidia-container-toolkit-keyring.gpg] https://example.invalid /\n"
+        ),
     )
 
     assert spec.command_line() == (
@@ -97,4 +100,8 @@ def test_nvidia_runtime_install_plan_is_complete_for_clean_ubuntu_lts() -> None:
     assert repo_spec.stdin is not None
     assert "nvidia.github.io/libnvidia-container/stable/deb" in repo_spec.stdin
     assert "|" not in repo_spec.command_line()
+    keyring_spec = next(
+        spec for spec in specs if spec.id == "nvidia_runtime.install_gpg_keyring"
+    )
+    assert "--yes" in keyring_spec.args
     assert "apt-get update" in specs[4].command_line()

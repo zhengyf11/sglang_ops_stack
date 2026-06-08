@@ -124,7 +124,9 @@ class EnvironmentCheckRunner:
                 return
             self._check_container_gpu()
         except SSHAuthError as exc:
-            self._fail(EnvironmentErrorCode.SSH_CONNECT_FAILED, str(exc) or "SSH authentication failed")
+            self._fail(
+                EnvironmentErrorCode.SSH_CONNECT_FAILED, str(exc) or "SSH authentication failed"
+            )
             return
         except SSHCommandTimeoutError as exc:
             self._fail(EnvironmentErrorCode.COMMAND_TIMEOUT, str(exc) or "Remote command timed out")
@@ -162,7 +164,9 @@ class EnvironmentCheckRunner:
                 return
             self._check_container_gpu()
         except SSHAuthError as exc:
-            self._fail(EnvironmentErrorCode.SSH_CONNECT_FAILED, str(exc) or "SSH authentication failed")
+            self._fail(
+                EnvironmentErrorCode.SSH_CONNECT_FAILED, str(exc) or "SSH authentication failed"
+            )
             return
         except SSHCommandTimeoutError as exc:
             self._fail(EnvironmentErrorCode.COMMAND_TIMEOUT, str(exc) or "Remote command timed out")
@@ -255,10 +259,25 @@ class EnvironmentCheckRunner:
         result = self._execute(spec, step_id)
         if not self._ok(result, spec):
             self.steps.append(
-                _step(step_id, "failed", "SSH command execution failed", EnvironmentErrorCode.SSH_CONNECT_FAILED, self._commands(step_id))
+                _step(
+                    step_id,
+                    "failed",
+                    "SSH command execution failed",
+                    EnvironmentErrorCode.SSH_CONNECT_FAILED,
+                    self._commands(step_id),
+                )
             )
-            raise _EnvFailure(EnvironmentErrorCode.SSH_CONNECT_FAILED, "Unable to execute SSH smoke command")
-        self.steps.append(_step(step_id, "passed", "SSH command execution succeeded", commands=self._commands(step_id)))
+            raise _EnvFailure(
+                EnvironmentErrorCode.SSH_CONNECT_FAILED, "Unable to execute SSH smoke command"
+            )
+        self.steps.append(
+            _step(
+                step_id,
+                "passed",
+                "SSH command execution succeeded",
+                commands=self._commands(step_id),
+            )
+        )
 
     def _check_os(self) -> None:
         step_id = "os"
@@ -268,9 +287,17 @@ class EnvironmentCheckRunner:
         arch = self._execute(arch_spec, step_id)
         if not self._ok(release, release_spec) or not self._ok(arch, arch_spec):
             self.steps.append(
-                _step(step_id, "failed", "Unable to read OS information", EnvironmentErrorCode.UNSUPPORTED_OS, self._commands(step_id))
+                _step(
+                    step_id,
+                    "failed",
+                    "Unable to read OS information",
+                    EnvironmentErrorCode.UNSUPPORTED_OS,
+                    self._commands(step_id),
+                )
             )
-            raise _EnvFailure(EnvironmentErrorCode.UNSUPPORTED_OS, "Unable to detect supported Ubuntu LTS OS")
+            raise _EnvFailure(
+                EnvironmentErrorCode.UNSUPPORTED_OS, "Unable to detect supported Ubuntu LTS OS"
+            )
         os_info = parse_os_release(release.stdout)
         os_id = os_info.get("id", "")
         version_id = os_info.get("version_id", "")
@@ -279,7 +306,11 @@ class EnvironmentCheckRunner:
                 _step(
                     step_id,
                     "failed",
-                    f"Only supported Ubuntu LTS hosts are allowed; detected ID={os_id or 'unknown'} VERSION_ID={version_id or 'unknown'}",
+                    (
+                        "Only supported Ubuntu LTS hosts are allowed; "
+                        f"detected ID={os_id or 'unknown'} "
+                        f"VERSION_ID={version_id or 'unknown'}"
+                    ),
                     EnvironmentErrorCode.UNSUPPORTED_OS,
                     self._commands(step_id),
                 )
@@ -304,9 +335,24 @@ class EnvironmentCheckRunner:
         spec = self.builder.gpu_lspci()
         result = self._execute(spec, step_id)
         if not self._ok(result, spec) or "nvidia" not in (result.stdout + result.stderr).lower():
-            self.steps.append(_step(step_id, "failed", "No NVIDIA GPU found", EnvironmentErrorCode.NO_NVIDIA_GPU, self._commands(step_id)))
+            self.steps.append(
+                _step(
+                    step_id,
+                    "failed",
+                    "No NVIDIA GPU found",
+                    EnvironmentErrorCode.NO_NVIDIA_GPU,
+                    self._commands(step_id),
+                )
+            )
             raise _EnvFailure(EnvironmentErrorCode.NO_NVIDIA_GPU, "No NVIDIA GPU found")
-        self.steps.append(_step(step_id, "passed", "NVIDIA GPU is visible on PCI bus", commands=self._commands(step_id)))
+        self.steps.append(
+            _step(
+                step_id,
+                "passed",
+                "NVIDIA GPU is visible on PCI bus",
+                commands=self._commands(step_id),
+            )
+        )
 
     def _check_driver(self) -> bool:
         step_id = "driver"
@@ -322,7 +368,10 @@ class EnvironmentCheckRunner:
             self.install_plan.append(
                 {
                     "id": "driver.manual_install",
-                    "description": "Manually install a compatible NVIDIA data center driver, reboot the host, then continue from driver check.",
+                    "description": (
+                        "Manually install a compatible NVIDIA data center driver, "
+                        "reboot the host, then continue from driver check."
+                    ),
                     "risk": "manual_reboot_required",
                     "manual": True,
                     "reboot_required": True,
@@ -333,7 +382,10 @@ class EnvironmentCheckRunner:
                 _step(
                     step_id,
                     "reboot_required",
-                    "NVIDIA driver is unavailable; manual installation or repair and reboot are required before continuing",
+                    (
+                        "NVIDIA driver is unavailable; manual installation or repair "
+                        "and reboot are required before continuing"
+                    ),
                     EnvironmentErrorCode.DRIVER_NOT_READY,
                     self._commands(step_id),
                 )
@@ -341,7 +393,12 @@ class EnvironmentCheckRunner:
             return False
         self.host.gpu_info = mask_secret(result.stdout.strip(), self.secrets) or None
         self.steps.append(
-            _step(step_id, "passed", "nvidia-smi reported driver and GPU information", commands=self._commands(step_id))
+            _step(
+                step_id,
+                "passed",
+                "nvidia-smi reported driver and GPU information",
+                commands=self._commands(step_id),
+            )
         )
         return True
 
@@ -351,18 +408,39 @@ class EnvironmentCheckRunner:
         version = self._execute(version_spec, step_id)
         service_spec = self.builder.docker_service_active()
         service = self._execute(service_spec, step_id) if self._ok(version, version_spec) else None
-        if self._ok(version, version_spec) and service is not None and "active" in service.stdout:
+        docker_running = (
+            self._ok(version, version_spec)
+            and service is not None
+            and self._ok(service, service_spec)
+            and service.stdout.strip() == "active"
+        )
+        if docker_running:
             status = "skipped" if install else "passed"
-            self.steps.append(_step(step_id, status, "Docker is installed and running", commands=self._commands(step_id)))
+            self.steps.append(
+                _step(
+                    step_id,
+                    status,
+                    "Docker is installed and running",
+                    commands=self._commands(step_id),
+                )
+            )
             return True
         if install:
             for spec in self.builder.install_docker():
                 result = self._execute(spec, step_id)
                 if not self._ok(result, spec):
                     self.steps.append(
-                        _step(step_id, "failed", "Docker installation failed", EnvironmentErrorCode.DOCKER_NOT_INSTALLED, self._commands(step_id))
+                        _step(
+                            step_id,
+                            "failed",
+                            "Docker installation failed",
+                            EnvironmentErrorCode.DOCKER_NOT_INSTALLED,
+                            self._commands(step_id),
+                        )
                     )
-                    self._fail(EnvironmentErrorCode.DOCKER_NOT_INSTALLED, "Docker installation failed")
+                    self._fail(
+                        EnvironmentErrorCode.DOCKER_NOT_INSTALLED, "Docker installation failed"
+                    )
                     return False
             return self._check_docker(install=False)
         self.install_plan.extend(spec.safe_summary() for spec in self.builder.install_docker())
@@ -386,7 +464,12 @@ class EnvironmentCheckRunner:
         if self._ok(ctk, ctk_spec) and runtime is not None and "nvidia" in runtime.stdout.lower():
             status = "skipped" if install else "passed"
             self.steps.append(
-                _step(step_id, status, "NVIDIA Docker runtime is configured", commands=self._commands(step_id))
+                _step(
+                    step_id,
+                    status,
+                    "NVIDIA Docker runtime is configured",
+                    commands=self._commands(step_id),
+                )
             )
             return True
         if install:
@@ -440,7 +523,14 @@ class EnvironmentCheckRunner:
                 EnvironmentErrorCode.RUNTIME_VERIFY_FAILED,
                 "CUDA test container cannot access GPU",
             )
-        self.steps.append(_step(step_id, "passed", "CUDA test container can access GPU", commands=self._commands(step_id)))
+        self.steps.append(
+            _step(
+                step_id,
+                "passed",
+                "CUDA test container can access GPU",
+                commands=self._commands(step_id),
+            )
+        )
 
     def _wait_for_confirmation(
         self,

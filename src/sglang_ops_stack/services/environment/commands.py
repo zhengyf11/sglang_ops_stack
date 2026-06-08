@@ -150,6 +150,7 @@ class HostCheckCommandBuilder:
                 id="nvidia_runtime.install_gpg_keyring",
                 executable="gpg",
                 args=(
+                    "--yes",
                     "--dearmor",
                     "-o",
                     "/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg",
@@ -177,7 +178,10 @@ class HostCheckCommandBuilder:
                 sudo=True,
                 timeout_seconds=120,
                 risk=CommandRisk.package_install,
-                description="Refresh apt package index after adding NVIDIA Container Toolkit repository",
+                description=(
+                    "Refresh apt package index after adding NVIDIA Container Toolkit "
+                    "repository"
+                ),
             ),
             CommandSpec(
                 id="nvidia_runtime.install_toolkit",
