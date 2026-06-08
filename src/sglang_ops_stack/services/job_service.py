@@ -19,12 +19,14 @@ def create_job(
     *,
     target_id: int,
     job_type: str | JobType = JobType.ssh_connect_check,
+    target_type: str | TargetType = TargetType.host,
 ) -> Job:
     type_value = job_type.value if isinstance(job_type, JobType) else job_type
+    target_type_value = target_type.value if isinstance(target_type, TargetType) else target_type
     job = Job(
         type=type_value,
         status=JobStatus.pending.value,
-        target_type=TargetType.host.value,
+        target_type=target_type_value,
         target_id=target_id,
     )
     db.add(job)

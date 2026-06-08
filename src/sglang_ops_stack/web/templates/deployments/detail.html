@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}{{ deployment.name }} · Deployment{% endblock %}
+{% block content %}
+<section>
+  <h2>{{ deployment.name }}</h2>
+  <dl>
+    <dt>Service URL</dt><dd>{% if deployment.service_url %}<a href="{{ deployment.service_url }}">{{ deployment.service_url }}</a>{% else %}-{% endif %}</dd>
+    <dt>Metrics URL</dt><dd>{{ deployment.metrics_url or '-' }}</dd>
+    <dt>Container</dt><dd>{{ deployment.container_name }} ({{ deployment.status }})</dd>
+    <dt>HTTP health</dt><dd>{{ deployment.last_health_status.status if deployment.last_health_status else 'UNKNOWN' }}</dd>
+    <dt>Last checked</dt><dd>{{ deployment.last_checked_at or '-' }}</dd>
+    <dt>Revision</dt><dd>{{ deployment.current_version }} / {{ deployment.current_revision_id or '-' }}</dd>
+    <dt>Last error</dt><dd>{{ deployment.last_error_code or '-' }} {{ deployment.last_error_message or '' }}</dd>
+  </dl>
+
+  <h3>Risk warnings</h3>
+  <ul>
+    {% if deployment.docker_config.get('privileged') %}<li>Risk: --privileged grants broad host capabilities.</li>{% endif %}
+    {% if deployment.docker_config.get('network') == 'host' %}<li>Risk: --network host exposes service directly.</li>{% endif %}
+    {% if not deployment.docker_config.get('user') or deployment.docker_config.get('user') in ['root', '0'] %}<li>Risk: container process runs as root.</li>{% endif %}
+    {% if deployment.docker_config.get('gpus') == 'all' %}<li>Risk: --gpus all exposes all GPUs.</li>{% endif %}
+  </ul>
+
+  <h3>Command preview (redacted)</h3>
+  <pre>{{ deployment.last_command_preview }}</pre>
+
+  <h3>Layered health</h3>
+  {% if deployment.last_health_status %}
+  <table>
+    <thead><tr><th>Layer</th><th>Status</th><th>Message</th><th>Checked at</th></tr></thead>
+    <tbody>
+    {% for layer in deployment.last_health_status.layers %}
+      <tr><td>{{ layer.name }}</td><td>{{ layer.status }}</td><td>{{ layer.message }}</td><td>{{ layer.checked_at }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}<p>No health checks yet.</p>{% endif %}
+
+  <h3>Configuration</h3>
+  <ul>
+    <li>Image: {{ deployment.image }}</li>
+    <li>Port: {{ deployment.port }}</li>
+    <li>Parallelism: TP={{ deployment.tp_size }} DP={{ deployment.dp_size }} PP={{ deployment.pp_size }}</li>
+    <li>Model path: ***</li>
+  </ul>
+
+  <h3>Deploy</h3>
+  <form method="post" action="/deployments/{{ deployment.id }}/deploy">
+    <label>SSH password <input name="password" type="password" required></label>
+    <label><input name="confirm_remove_existing" type="checkbox" value="yes"> Confirm container overwrite if configured</label>
+    <button type="submit">Start deployment job</button>
+  </form>
+
+  <h3>Recent deployment job</h3>
+  {% if job %}<p><a href="/jobs/{{ job.id }}">Job #{{ job.id }}</a> {{ job.status }}</p>{% else %}<p>No deployment job yet.</p>{% endif %}
+  {% if logs %}<ul>{% for log in logs[-5:] %}<li>{{ log.level }} {{ log.message }}</li>{% endfor %}</ul>{% endif %}
+  <p>Retry tip: verify host environment readiness, Docker service, free port, and container logs before retrying.</p>
+</section>
+{% endblock %}

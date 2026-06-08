@@ -6,10 +6,12 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
+from sglang_ops_stack.api.schemas.deployment import DeploymentCreate
 from sglang_ops_stack.api.schemas.host import HostCreate, HostUpdate
 from sglang_ops_stack.db.session import get_db
 from sglang_ops_stack.domain_enums import JobStatus, JobType
-from sglang_ops_stack.services import host_service, job_service
+from sglang_ops_stack.jobs.deployment_jobs import run_deployment_task
+from sglang_ops_stack.services import deployment_service, host_service, job_service
 from sglang_ops_stack.services.environment.runner import (
     confirm_environment_install_task,
     run_environment_check_task,
@@ -29,6 +31,85 @@ def _redirect(path: str) -> RedirectResponse:
 @router.get("/", response_class=HTMLResponse, include_in_schema=False)
 def index(request: Request) -> HTMLResponse:
     return templates.TemplateResponse(request, "dashboard.html", {})
+
+
+@router.get("/deployments", response_class=HTMLResponse)
+def deployments_page(request: Request, db: DbSession) -> HTMLResponse:
+    return templates.TemplateResponse(
+        request,
+        "deployments/list.html",
+        {"deployments": deployment_service.list_deployments(db)},
+    )
+
+
+@router.get("/deployments/new", response_class=HTMLResponse)
+def new_deployment_page(request: Request, db: DbSession) -> HTMLResponse:
+    return templates.TemplateResponse(
+        request,
+        "deployments/create.html",
+        {"hosts": host_service.list_hosts(db)},
+    )
+
+
+@router.post("/deployments")
+def create_deployment_page(
+    db: DbSession,
+    host_id: Annotated[int, Form()],
+    name: Annotated[str, Form()],
+    container_name: Annotated[str, Form()],
+    image: Annotated[str, Form()],
+    model_path: Annotated[str, Form()],
+    port: Annotated[int, Form()] = 30000,
+    served_model_name: Annotated[str | None, Form()] = None,
+) -> RedirectResponse:
+    deployment = deployment_service.create_deployment(
+        db,
+        DeploymentCreate(
+            host_id=host_id,
+            name=name,
+            container_name=container_name,
+            image=image,
+            model_path=model_path,
+            served_model_name=served_model_name,
+            port=port,
+        ),
+    )
+    return _redirect(f"/deployments/{deployment.id}")
+
+
+@router.get("/deployments/{deployment_id}", response_class=HTMLResponse)
+def deployment_detail_page(deployment_id: int, request: Request, db: DbSession) -> HTMLResponse:
+    deployment = deployment_service.get_deployment(db, deployment_id)
+    if deployment is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Deployment not found")
+    job = job_service.get_job(db, deployment.last_job_id) if deployment.last_job_id else None
+    logs = job_service.list_logs(db, job.id) if job else []
+    return templates.TemplateResponse(
+        request,
+        "deployments/detail.html",
+        {"deployment": deployment, "job": job, "logs": logs},
+    )
+
+
+@router.post("/deployments/{deployment_id}/deploy")
+def deploy_deployment_page(
+    deployment_id: int,
+    background_tasks: BackgroundTasks,
+    db: DbSession,
+    password: Annotated[str, Form()],
+    confirm_remove_existing: Annotated[str | None, Form()] = None,
+) -> RedirectResponse:
+    deployment = deployment_service.get_deployment(db, deployment_id)
+    if deployment is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Deployment not found")
+    job = deployment_service.create_deployment_job(db, deployment)
+    background_tasks.add_task(
+        run_deployment_task,
+        job.id,
+        password,
+        confirm_remove_existing == "yes",
+    )
+    return _redirect(f"/jobs/{job.id}")
 
 
 @router.get("/hosts", response_class=HTMLResponse)

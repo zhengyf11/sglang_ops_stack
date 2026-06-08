@@ -13,7 +13,9 @@ class JobStatus(StrEnum):
 class JobType(StrEnum):
     ssh_connect_check = "ssh_connect_check"
     environment_check = "environment_check"
+    deployment = "deployment"
 
 
 class TargetType(StrEnum):
     host = "host"
+    deployment = "deployment"
