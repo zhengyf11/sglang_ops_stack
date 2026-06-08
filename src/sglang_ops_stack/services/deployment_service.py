@@ -141,6 +141,78 @@ def create_revision(
     return revision
 
 
+def list_revisions(db: Session, deployment_id: int) -> Sequence[DeploymentRevision]:
+    return db.scalars(
+        select(DeploymentRevision)
+        .where(DeploymentRevision.deployment_id == deployment_id)
+        .order_by(DeploymentRevision.revision_no.desc())
+    ).all()
+
+
+def get_revision(db: Session, deployment_id: int, revision_id: int) -> DeploymentRevision | None:
+    return db.scalar(
+        select(DeploymentRevision).where(
+            DeploymentRevision.id == revision_id,
+            DeploymentRevision.deployment_id == deployment_id,
+        )
+    )
+
+
+def payload_from_deployment(deployment: Deployment) -> DeploymentCreate:
+    from sglang_ops_stack.api.schemas.deployment import DockerConfig, SGLangConfig
+
+    return DeploymentCreate(
+        host_id=deployment.host_id,
+        name=deployment.name,
+        container_name=deployment.container_name,
+        image=deployment.image,
+        model_path=deployment.model_path,
+        served_model_name=deployment.served_model_name,
+        port=deployment.port,
+        tp_size=deployment.tp_size,
+        dp_size=deployment.dp_size,
+        pp_size=deployment.pp_size,
+        mem_fraction_static=deployment.mem_fraction_static,
+        docker_config=DockerConfig.model_validate(deployment.docker_config),
+        sglang_config=SGLangConfig.model_validate(deployment.sglang_config),
+    )
+
+
+def apply_payload_to_deployment(
+    db: Session, deployment: Deployment, payload: DeploymentCreate
+) -> Deployment:
+    host = db.get(Host, payload.host_id)
+    if host is None:
+        raise ValueError("host not found")
+    command_preview, _warnings = preview_commands(payload)
+    deployment.host_id = payload.host_id
+    deployment.name = payload.name
+    deployment.container_name = payload.container_name
+    deployment.image = payload.image
+    deployment.model_path = payload.model_path
+    deployment.served_model_name = payload.served_model_name
+    deployment.bind_host = payload.sglang_config.host
+    deployment.port = payload.port
+    deployment.tp_size = payload.tp_size
+    deployment.dp_size = payload.dp_size
+    deployment.pp_size = payload.pp_size
+    deployment.mem_fraction_static = payload.mem_fraction_static
+    deployment.docker_config = payload.docker_config.model_dump()
+    deployment.sglang_config = payload.sglang_config.model_dump()
+    deployment.service_url = f"http://{host.ip}:{payload.port}"
+    deployment.metrics_url = (
+        f"http://{host.ip}:{payload.port}/metrics" if payload.sglang_config.enable_metrics else None
+    )
+    deployment.last_command_preview = command_preview
+    revision = create_revision(db, deployment, payload, command_preview)
+    deployment.current_revision_id = revision.id
+    deployment.current_version = revision.revision_no
+    db.add(deployment)
+    db.commit()
+    db.refresh(deployment)
+    return deployment
+
+
 def create_deployment_job(db: Session, deployment: Deployment) -> Any:
     job = job_service.create_job(
         db,

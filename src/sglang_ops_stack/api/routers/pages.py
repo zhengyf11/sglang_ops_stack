@@ -1,17 +1,31 @@
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal, cast
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Form, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
-from sglang_ops_stack.api.schemas.deployment import DeploymentCreate
+from sglang_ops_stack.api.schemas.deployment import (
+    DeploymentCreate,
+    DeploymentRevisionRead,
+    DockerConfig,
+)
 from sglang_ops_stack.api.schemas.host import HostCreate, HostUpdate
+from sglang_ops_stack.db.models.host import Host
 from sglang_ops_stack.db.session import get_db
 from sglang_ops_stack.domain_enums import JobStatus, JobType
 from sglang_ops_stack.jobs.deployment_jobs import run_deployment_task
-from sglang_ops_stack.services import deployment_service, host_service, job_service
+from sglang_ops_stack.jobs.operation_jobs import run_operation_task
+from sglang_ops_stack.jobs.redeploy_jobs import run_redeploy_task
+from sglang_ops_stack.remote.executor import SSHExecutor
+from sglang_ops_stack.services import (
+    deployment_service,
+    host_service,
+    job_service,
+    operation_service,
+    redeploy_service,
+)
 from sglang_ops_stack.services.environment.runner import (
     confirm_environment_install_task,
     run_environment_check_task,
@@ -84,11 +98,43 @@ def deployment_detail_page(deployment_id: int, request: Request, db: DbSession) 
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Deployment not found")
     job = job_service.get_job(db, deployment.last_job_id) if deployment.last_job_id else None
     logs = job_service.list_logs(db, job.id) if job else []
+    can_restart = deployment.status in {"running", "degraded", "failed"}
+    can_stop = deployment.status in {"running", "degraded", "failed"}
+    can_start = deployment.status in {"stopped", "failed"}
     return templates.TemplateResponse(
         request,
         "deployments/detail.html",
-        {"deployment": deployment, "job": job, "logs": logs},
+        {
+            "deployment": deployment,
+            "job": job,
+            "logs": logs,
+            "can_restart": can_restart,
+            "can_stop": can_stop,
+            "can_start": can_start,
+        },
     )
+
+
+@router.post("/deployments/{deployment_id}/operations/{operation}")
+def deployment_operation_page(
+    deployment_id: int,
+    operation: str,
+    background_tasks: BackgroundTasks,
+    db: DbSession,
+    password: Annotated[str, Form()],
+) -> RedirectResponse:
+    if operation not in {"restart", "stop", "start"}:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Operation not found")
+    typed_operation = cast(Literal["restart", "stop", "start"], operation)
+    deployment = deployment_service.get_deployment(db, deployment_id)
+    if deployment is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Deployment not found")
+    try:
+        job = operation_service.create_operation_job(db, deployment, typed_operation)
+    except operation_service.OperationError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    background_tasks.add_task(run_operation_task, job.id, typed_operation, password)
+    return _redirect(f"/jobs/{job.id}")
 
 
 @router.post("/deployments/{deployment_id}/deploy")
@@ -110,6 +156,131 @@ def deploy_deployment_page(
         confirm_remove_existing == "yes",
     )
     return _redirect(f"/jobs/{job.id}")
+
+
+@router.get("/deployments/{deployment_id}/logs", response_class=HTMLResponse)
+def deployment_logs_page(deployment_id: int, request: Request, db: DbSession) -> HTMLResponse:
+    deployment = deployment_service.get_deployment(db, deployment_id)
+    if deployment is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Deployment not found")
+    return templates.TemplateResponse(request, "deployments/logs.html", {"deployment": deployment})
+
+
+@router.post("/deployments/{deployment_id}/logs", response_class=HTMLResponse)
+def deployment_logs_submit_page(
+    deployment_id: int,
+    request: Request,
+    db: DbSession,
+    password: Annotated[str, Form()],
+    tail: Annotated[int, Form()] = 100,
+) -> HTMLResponse:
+    deployment = deployment_service.get_deployment(db, deployment_id)
+    if deployment is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Deployment not found")
+    host = db.get(Host, deployment.host_id)
+    if host is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Host not found")
+    safe_tail, log_text = operation_service.read_container_logs(
+        db,
+        deployment=deployment,
+        host=host,
+        password=password,
+        tail=tail,
+        executor=SSHExecutor(),
+    )
+    return templates.TemplateResponse(
+        request,
+        "deployments/logs.html",
+        {"deployment": deployment, "tail": safe_tail, "log_text": log_text},
+    )
+
+
+@router.get("/deployments/{deployment_id}/redeploy", response_class=HTMLResponse)
+def redeploy_page(deployment_id: int, request: Request, db: DbSession) -> HTMLResponse:
+    deployment = deployment_service.get_deployment(db, deployment_id)
+    if deployment is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Deployment not found")
+    payload = deployment_service.payload_from_deployment(deployment)
+    plan = redeploy_service.plan_redeploy(deployment, payload)
+    return templates.TemplateResponse(
+        request,
+        "deployments/redeploy.html",
+        {"deployment": deployment, "plan": plan, "payload": payload},
+    )
+
+
+@router.post("/deployments/{deployment_id}/redeploy")
+def redeploy_submit_page(
+    deployment_id: int,
+    background_tasks: BackgroundTasks,
+    db: DbSession,
+    password: Annotated[str, Form()],
+    name: Annotated[str, Form()],
+    container_name: Annotated[str, Form()],
+    image: Annotated[str, Form()],
+    port: Annotated[int, Form()],
+    model_path: Annotated[str | None, Form()] = None,
+    privileged: Annotated[str | None, Form()] = None,
+    confirm_high_risk: Annotated[str | None, Form()] = None,
+) -> RedirectResponse:
+    deployment = deployment_service.get_deployment(db, deployment_id)
+    if deployment is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Deployment not found")
+    docker_config = DockerConfig(privileged=privileged == "yes")
+    payload = DeploymentCreate(
+        host_id=deployment.host_id,
+        name=name,
+        container_name=container_name,
+        image=image,
+        model_path=model_path if model_path else deployment.model_path,
+        port=port,
+        docker_config=docker_config,
+    )
+    confirmed = confirm_high_risk == "yes"
+    try:
+        job, _plan = redeploy_service.create_redeploy_job(
+            db,
+            deployment,
+            payload,
+            confirm_high_risk=confirmed,
+        )
+    except redeploy_service.RedeployError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    background_tasks.add_task(run_redeploy_task, job.id, password, payload.model_dump(), confirmed)
+    return _redirect(f"/jobs/{job.id}")
+
+
+@router.get("/deployments/{deployment_id}/revisions", response_class=HTMLResponse)
+def revisions_page(deployment_id: int, request: Request, db: DbSession) -> HTMLResponse:
+    deployment = deployment_service.get_deployment(db, deployment_id)
+    if deployment is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Deployment not found")
+    return templates.TemplateResponse(
+        request,
+        "deployments/revisions.html",
+        {
+            "deployment": deployment,
+            "revisions": deployment_service.list_revisions(db, deployment_id),
+        },
+    )
+
+
+@router.get("/deployments/{deployment_id}/revisions/{revision_id}", response_class=HTMLResponse)
+def revision_detail_page(
+    deployment_id: int, revision_id: int, request: Request, db: DbSession
+) -> HTMLResponse:
+    deployment = deployment_service.get_deployment(db, deployment_id)
+    if deployment is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Deployment not found")
+    revision = deployment_service.get_revision(db, deployment_id, revision_id)
+    if revision is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Revision not found")
+    safe_revision = DeploymentRevisionRead.model_validate(revision)
+    return templates.TemplateResponse(
+        request,
+        "deployments/revision_detail.html",
+        {"deployment": deployment, "revision": safe_revision},
+    )
 
 
 @router.get("/hosts", response_class=HTMLResponse)

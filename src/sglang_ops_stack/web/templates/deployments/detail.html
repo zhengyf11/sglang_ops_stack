@@ -13,6 +13,26 @@
     <dt>Last error</dt><dd>{{ deployment.last_error_code or '-' }} {{ deployment.last_error_message or '' }}</dd>
   </dl>
 
+  <p>
+    <a href="/deployments/{{ deployment.id }}/logs">View logs</a> ·
+    <a href="/deployments/{{ deployment.id }}/redeploy">Redeploy</a> ·
+    <a href="/deployments/{{ deployment.id }}/revisions">Revision history</a>
+  </p>
+
+  <h3>Operations</h3>
+  <form method="post" action="/deployments/{{ deployment.id }}/operations/restart" style="display:inline">
+    <input name="password" type="password" placeholder="SSH password" required>
+    <button type="submit" {% if not can_restart %}disabled{% endif %}>Restart</button>
+  </form>
+  <form method="post" action="/deployments/{{ deployment.id }}/operations/stop" style="display:inline">
+    <input name="password" type="password" placeholder="SSH password" required>
+    <button type="submit" {% if not can_stop %}disabled{% endif %}>Stop</button>
+  </form>
+  <form method="post" action="/deployments/{{ deployment.id }}/operations/start" style="display:inline">
+    <input name="password" type="password" placeholder="SSH password" required>
+    <button type="submit" {% if not can_start %}disabled{% endif %}>Start</button>
+  </form>
+
   <h3>Risk warnings</h3>
   <ul>
     {% if deployment.docker_config.get('privileged') %}<li>Risk: --privileged grants broad host capabilities.</li>{% endif %}

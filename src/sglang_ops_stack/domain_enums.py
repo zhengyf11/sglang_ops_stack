@@ -14,6 +14,8 @@ class JobType(StrEnum):
     ssh_connect_check = "ssh_connect_check"
     environment_check = "environment_check"
     deployment = "deployment"
+    deployment_operation = "deployment_operation"
+    redeployment = "redeployment"
 
 
 class TargetType(StrEnum):
