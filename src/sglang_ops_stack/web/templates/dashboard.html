@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Dashboard · sglang_ops_stack{% endblock %}
+{% block content %}
+<section>
+  <h2>Dashboard</h2>
+  <p>Project foundation is ready. Use the links below to manage hosts and inspect jobs.</p>
+  <ul>
+    <li><a href="/hosts">Hosts</a></li>
+    <li><a href="/hosts/new">Register a new host</a></li>
+    <li><a href="/docs">API documentation</a></li>
+    <li><a href="/api/health">API health</a></li>
+  </ul>
+</section>
+{% endblock %}
