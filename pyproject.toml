@@ -12,6 +12,7 @@ dependencies = [
   "pydantic>=2",
   "pydantic-settings>=2",
   "sqlalchemy>=2",
+  "alembic>=1.13",
   "paramiko>=3.4",
 ]
 

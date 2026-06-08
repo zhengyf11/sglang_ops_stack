@@ -26,9 +26,9 @@ def _redirect(path: str) -> RedirectResponse:
     return RedirectResponse(path, status_code=status.HTTP_303_SEE_OTHER)
 
 
-@router.get("/", include_in_schema=False)
-def index() -> RedirectResponse:
-    return _redirect("/hosts")
+@router.get("/", response_class=HTMLResponse, include_in_schema=False)
+def index(request: Request) -> HTMLResponse:
+    return templates.TemplateResponse(request, "dashboard.html", {})
 
 
 @router.get("/hosts", response_class=HTMLResponse)

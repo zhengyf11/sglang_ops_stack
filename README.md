@@ -7,6 +7,8 @@ sglang 推理引擎一键安装、部署、监控、运维平台。
 当前实现范围：
 
 - FastAPI + SQLAlchemy + SQLite 最小可运行骨架。
+- Dashboard 首页、结构化健康检查、结构化日志基础与安全配置入口。
+- Alembic 初始迁移基线，覆盖当前 Host / Job / JobLog 表结构。
 - Host 主机资产 CRUD API 与页面。
 - 会话级 SSH 密码输入；密码仅用于本次 SSH 检查，不写入数据库。
 - Paramiko-backed `SSHExecutor` 抽象，返回统一命令执行结果。
@@ -31,8 +33,20 @@ SGLANG_OPS_DATABASE_URL=sqlite:///./sglang_ops_stack.db
 
 打开页面：
 
+- Dashboard：<http://127.0.0.1:8000/>
 - Host 列表：<http://127.0.0.1:8000/hosts>
 - API 文档：<http://127.0.0.1:8000/docs>
+- 健康检查：<http://127.0.0.1:8000/api/health>
+
+## 数据库迁移
+
+Alembic 已作为数据库迁移基础设施引入，初始 revision 对齐当前 SQLAlchemy models（Host / Job / JobLog）：
+
+```bash
+alembic upgrade head
+```
+
+MVP/development 路径中，`create_app()` 仍保留 `Base.metadata.create_all(bind=engine)` 作为本地启动和测试兜底；正式 schema 演进应优先通过 Alembic revision 管理。
 
 ## 测试与质量检查
 
