@@ -18,6 +18,9 @@ def test_api_health_reports_app_and_database_without_sensitive_details(client: T
     assert body["status"] == "ok"
     assert body["app"]["status"] == "ok"
     assert body["app"]["name"] == "sglang_ops_stack"
+    assert isinstance(body["app"]["version"], str)
+    assert body["app"]["version"]
+    assert body["app"]["environment"] == "development"
     assert body["database"]["status"] == "ok"
     serialized = response.text.lower()
     assert "sqlite" not in serialized

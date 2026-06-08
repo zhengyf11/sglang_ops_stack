@@ -1,3 +1,4 @@
+from importlib.metadata import PackageNotFoundError, version
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends
@@ -12,8 +13,16 @@ router = APIRouter(prefix="/api/health", tags=["health"])
 DbSession = Annotated[Session, Depends(get_db)]
 
 
+def get_app_version() -> str:
+    try:
+        return version("sglang-ops-stack")
+    except PackageNotFoundError:
+        return "0.0.0"
+
+
 class AppHealth(BaseModel):
     name: str
+    version: str
     environment: str
     status: Literal["ok"]
 
@@ -41,6 +50,7 @@ def api_health(db: DbSession) -> HealthResponse:
         status="ok" if database_status == "ok" else "degraded",
         app=AppHealth(
             name=settings.app_name,
+            version=get_app_version(),
             environment=settings.environment,
             status="ok",
         ),
