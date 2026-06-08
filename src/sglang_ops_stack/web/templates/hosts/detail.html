@@ -21,4 +21,12 @@
   </form>
   <p class="hint">Password is used only for this request and is not stored.</p>
 </section>
+<section>
+  <h3>Environment check</h3>
+  <form method="post" action="/hosts/{{ host.id }}/environment/check">
+    <label>Session password <input type="password" name="password" autocomplete="current-password" required></label>
+    <button type="submit">Run environment check</button>
+  </form>
+  <p class="hint">Checks SSH, OS, GPU, driver, Docker, NVIDIA runtime and a CUDA GPU test container. Installation waits for explicit risk confirmation.</p>
+</section>
 {% endblock %}
