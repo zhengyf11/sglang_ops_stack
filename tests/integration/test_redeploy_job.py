@@ -35,8 +35,10 @@ class FakeExecutor:
 class FakeHealthService:
     def __init__(self, status: str = "OK") -> None:
         self.status = status
+        self.calls: list[dict[str, Any]] = []
 
-    def check_deployment(self, **_kwargs: Any) -> dict[str, Any]:
+    def check_deployment(self, **kwargs: Any) -> dict[str, Any]:
+        self.calls.append(kwargs)
         return {"status": self.status, "checked_at": "now", "layers": []}
 
 
@@ -118,11 +120,12 @@ def test_redeploy_success_creates_new_revision_after_health_check(db_session: Se
     assert job.result["previous_status"] == "running"
     assert "/models/new-secret" not in result_text
     executor = FakeExecutor()
+    health_service = FakeHealthService()
 
     RedeployJobRunner(
         db=db_session,
         executor=executor,  # type: ignore[arg-type]
-        health_service=FakeHealthService(),  # type: ignore[arg-type]
+        health_service=health_service,  # type: ignore[arg-type]
     ).run(
         deployment=deployment,
         host=host,
@@ -135,6 +138,8 @@ def test_redeploy_success_creates_new_revision_after_health_check(db_session: Se
     db_session.refresh(deployment)
     db_session.refresh(job)
     assert job.status == "succeeded"
+    assert health_service.calls[0]["port"] == 30001
+    assert health_service.calls[0]["service_url"] == "http://127.0.0.1:30001"
     assert deployment.status == "running"
     assert deployment.current_version == 2
     assert deployment.current_revision_id != old_revision_id
@@ -146,6 +151,53 @@ def test_redeploy_success_creates_new_revision_after_health_check(db_session: Se
         "deployment.docker_run_idle",
         "deployment.sglang_exec_start",
     ]
+
+
+def test_redeploy_health_failure_preserves_old_revision_and_config(db_session: Session) -> None:
+    host, deployment = _deployment(db_session)
+    old_revision_id = deployment.current_revision_id
+    old_version = deployment.current_version
+    old_image = deployment.image
+    old_port = deployment.port
+    payload = DeploymentCreate(
+        host_id=deployment.host_id,
+        name="demo2",
+        container_name="sglang_demo",
+        image="lmsysorg/sglang:new",
+        model_path="/models/new-secret",
+        port=30001,
+    )
+    job, _plan = redeploy_service.create_redeploy_job(
+        db_session,
+        deployment,
+        payload,
+        confirm_high_risk=True,
+    )
+    health_service = FakeHealthService(status="ERROR")
+
+    RedeployJobRunner(
+        db=db_session,
+        executor=FakeExecutor(),  # type: ignore[arg-type]
+        health_service=health_service,  # type: ignore[arg-type]
+    ).run(
+        deployment=deployment,
+        host=host,
+        job_id=job.id,
+        password="pw",
+        payload=payload,
+        confirm_high_risk=True,
+    )
+
+    db_session.refresh(deployment)
+    db_session.refresh(job)
+    assert job.status == "failed"
+    assert health_service.calls[0]["port"] == 30001
+    assert health_service.calls[0]["service_url"] == "http://127.0.0.1:30001"
+    assert deployment.current_revision_id == old_revision_id
+    assert deployment.current_version == old_version
+    assert deployment.image == old_image
+    assert deployment.port == old_port
+    assert deployment.status == "running"
 
 
 def test_redeploy_failure_preserves_old_revision_and_config(db_session: Session) -> None:

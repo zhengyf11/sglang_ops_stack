@@ -37,6 +37,8 @@ class HealthService:
         deployment: Deployment,
         password: str,
         docker_builder: DockerCommandBuilder,
+        service_url: str | None = None,
+        port: int | None = None,
     ) -> dict[str, Any]:
         checked_at = datetime.now(UTC).isoformat()
         layers: list[HealthLayerResult] = []
@@ -101,7 +103,9 @@ class HealthService:
             )
         )
 
-        client = self.client_factory(deployment.service_url or f"http://{host.ip}:{deployment.port}")
+        target_port = deployment.port if port is None else port
+        target_service_url = service_url or deployment.service_url or f"http://{host.ip}:{target_port}"
+        client = self.client_factory(target_service_url)
         health = client.health()
         layers.append(
             HealthLayerResult(

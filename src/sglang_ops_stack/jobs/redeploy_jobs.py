@@ -119,11 +119,14 @@ class RedeployJobRunner:
                 new_builder.exec_detached(build_sglang_argv(payload.sglang_config)),
                 secrets,
             )
+            candidate_service_url = f"http://{host.ip}:{payload.port}"
             health = self.health_service.check_deployment(
                 host=host,
                 deployment=deployment,
                 password=password,
                 docker_builder=new_builder,
+                service_url=candidate_service_url,
+                port=payload.port,
             )
             _add_log(self.db, job, "INFO", f"health aggregate status={health['status']}", secrets)
             if health["status"] == "ERROR":
