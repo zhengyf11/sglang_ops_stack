@@ -27,6 +27,7 @@ _ALLOWED_EXECUTABLES = {
     "lspci",
     "nvidia-ctk",
     "nvidia-smi",
+    "python3",
     "systemctl",
     "tee",
     "uname",

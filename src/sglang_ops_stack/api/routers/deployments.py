@@ -1,0 +1,65 @@
+from typing import Annotated
+
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from sqlalchemy.orm import Session
+
+from sglang_ops_stack.api.schemas.deployment import (
+    DeploymentCreate,
+    DeploymentPreview,
+    DeploymentRead,
+    DeployRequest,
+)
+from sglang_ops_stack.db.session import get_db
+from sglang_ops_stack.jobs.deployment_jobs import run_deployment_task
+from sglang_ops_stack.services import deployment_service
+
+router = APIRouter(prefix="/api/deployments", tags=["deployments"])
+DbSession = Annotated[Session, Depends(get_db)]
+
+
+@router.get("", response_model=list[DeploymentRead])
+def list_deployments(db: DbSession) -> list[DeploymentRead]:
+    return [DeploymentRead.model_validate(item) for item in deployment_service.list_deployments(db)]
+
+
+@router.post("/preview", response_model=DeploymentPreview)
+def preview_deployment(payload: DeploymentCreate) -> DeploymentPreview:
+    command_preview, warnings = deployment_service.preview_commands(payload)
+    return DeploymentPreview(command_preview=command_preview, risk_warnings=warnings)
+
+
+@router.post("", response_model=DeploymentRead, status_code=status.HTTP_201_CREATED)
+def create_deployment(payload: DeploymentCreate, db: DbSession) -> DeploymentRead:
+    try:
+        deployment = deployment_service.create_deployment(db, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return DeploymentRead.model_validate(deployment)
+
+
+@router.get("/{deployment_id}", response_model=DeploymentRead)
+def get_deployment(deployment_id: int, db: DbSession) -> DeploymentRead:
+    deployment = deployment_service.get_deployment(db, deployment_id)
+    if deployment is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Deployment not found")
+    return DeploymentRead.model_validate(deployment)
+
+
+@router.post("/{deployment_id}/deploy")
+def deploy(
+    deployment_id: int,
+    payload: DeployRequest,
+    background_tasks: BackgroundTasks,
+    db: DbSession,
+) -> dict[str, int | str]:
+    deployment = deployment_service.get_deployment(db, deployment_id)
+    if deployment is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Deployment not found")
+    job = deployment_service.create_deployment_job(db, deployment)
+    background_tasks.add_task(
+        run_deployment_task,
+        job.id,
+        payload.password,
+        payload.confirm_remove_existing,
+    )
+    return {"job_id": job.id, "status": job.status}

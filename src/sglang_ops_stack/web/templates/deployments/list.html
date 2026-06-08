@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Deployments · sglang_ops_stack{% endblock %}
+{% block content %}
+<section>
+  <h2>SGLang Deployments</h2>
+  <p><a href="/deployments/new">Create deployment</a></p>
+  <table>
+    <thead><tr><th>Name</th><th>Container</th><th>Status</th><th>Service</th><th>Revision</th></tr></thead>
+    <tbody>
+    {% for deployment in deployments %}
+      <tr>
+        <td><a href="/deployments/{{ deployment.id }}">{{ deployment.name }}</a></td>
+        <td>{{ deployment.container_name }}</td>
+        <td>{{ deployment.status }}</td>
+        <td>{% if deployment.service_url %}<a href="{{ deployment.service_url }}">{{ deployment.service_url }}</a>{% endif %}</td>
+        <td>{{ deployment.current_version }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="5">No deployments yet.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}
