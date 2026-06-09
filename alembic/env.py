@@ -1,3 +1,4 @@
+import os
 from logging.config import fileConfig
 
 from sqlalchemy import engine_from_config, pool
@@ -5,14 +6,23 @@ from sqlalchemy import engine_from_config, pool
 from alembic import context
 from sglang_ops_stack.config import get_settings
 from sglang_ops_stack.db.base import Base
-from sglang_ops_stack.db.models import Host, Job, JobLog  # noqa: F401
+from sglang_ops_stack.db.models import (  # noqa: F401
+    Deployment,
+    DeploymentRevision,
+    Host,
+    Job,
+    JobLog,
+    MonitoringConfig,
+)
 
 config = context.config
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-config.set_main_option("sqlalchemy.url", get_settings().database_url)
+config.set_main_option(
+    "sqlalchemy.url", os.getenv("ALEMBIC_DATABASE_URL", get_settings().database_url)
+)
 target_metadata = Base.metadata
 
 

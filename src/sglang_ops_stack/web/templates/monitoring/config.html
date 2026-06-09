@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Monitoring configuration · sglang_ops_stack{% endblock %}
+{% block content %}
+<section>
+  <h2>Monitoring configuration</h2>
+  <p>Configure external Prometheus and Grafana links. Credentials and tokens are not stored.</p>
+  {% if error %}<p role="alert">{{ error }}</p>{% endif %}
+  <form method="post" action="/monitoring">
+    <p>
+      <label>Prometheus Base URL<br>
+        <input name="prometheus_base_url" type="url" value="{{ config.prometheus_base_url if config else '' }}" placeholder="http://prometheus.local:9090">
+      </label>
+    </p>
+    <p>
+      <label>Grafana Base URL<br>
+        <input name="grafana_base_url" type="url" value="{{ config.grafana_base_url if config else '' }}" placeholder="http://grafana.local">
+      </label>
+    </p>
+    <p>
+      <label>Default Dashboard path/template<br>
+        <input name="default_dashboard_path" value="{{ config.default_dashboard_path if config else '' }}" placeholder="/d/sglang/overview?var-deployment={deployment}">
+      </label>
+    </p>
+    <button type="submit">Save monitoring configuration</button>
+  </form>
+  <p>Supported template variables: <code>{deployment}</code>, <code>{host}</code>, <code>{port}</code>, <code>{served_model_name}</code>.</p>
+  {% if config and (config.prometheus_base_url or config.grafana_base_url) %}
+  <p>
+    {% if config.prometheus_base_url %}<a href="{{ config.prometheus_base_url }}" target="_blank" rel="noopener noreferrer">Test Prometheus connection</a>{% endif %}
+    {% if config.prometheus_base_url and config.grafana_base_url %} · {% endif %}
+    {% if config.grafana_base_url %}<a href="{{ config.grafana_base_url }}" target="_blank" rel="noopener noreferrer">Test Grafana connection</a>{% endif %}
+  </p>
+  {% endif %}
+  <p>Connection testing opens the configured external endpoint in a new tab; no credentials are stored.</p>
+</section>
+{% endblock %}

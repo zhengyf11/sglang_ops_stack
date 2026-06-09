@@ -3,14 +3,46 @@
 {% block content %}
 <section>
   <h2>Dashboard</h2>
-  <p>Project foundation is ready. Use the links below to manage hosts and inspect jobs.</p>
+  <p>Manage hosts, deployments, jobs, and monitoring integration from one status panel.</p>
   <ul>
     <li><a href="/hosts">Hosts</a></li>
     <li><a href="/hosts/new">Register a new host</a></li>
     <li><a href="/deployments">SGLang deployments</a></li>
     <li><a href="/deployments/new">Create SGLang deployment</a></li>
+    <li><a href="/monitoring">Monitoring configuration</a></li>
     <li><a href="/docs">API documentation</a></li>
     <li><a href="/api/health">API health</a></li>
   </ul>
+</section>
+
+<section>
+  <h3>Deployment health overview</h3>
+  {% if summary %}
+  <dl>
+    <dt>Hosts</dt><dd>{{ summary.host_count }}</dd>
+    <dt>Deployments</dt><dd>{{ summary.deployment_count }}</dd>
+    <dt>Healthy</dt><dd>{{ summary.deployment_health.healthy }}</dd>
+    <dt>Warning</dt><dd>{{ summary.deployment_health.warning }}</dd>
+    <dt>Failed</dt><dd>{{ summary.deployment_health.failed }}</dd>
+    <dt>Unknown</dt><dd>{{ summary.deployment_health.unknown }}</dd>
+    <dt>Prometheus configured</dt><dd>{{ 'yes' if summary.prometheus_configured else 'no' }}</dd>
+    <dt>Grafana configured</dt><dd>{{ 'yes' if summary.grafana_configured else 'no' }}</dd>
+  </dl>
+  {% else %}
+  <p>No dashboard summary available.</p>
+  {% endif %}
+</section>
+
+<section>
+  <h3>Metrics unreachable deployments</h3>
+  {% if summary and summary.metrics_unreachable %}
+  <ul>
+    {% for deployment in summary.metrics_unreachable %}
+    <li><a href="/deployments/{{ deployment.id }}">{{ deployment.name }}</a> · {{ deployment.metrics_url or 'metrics disabled' }}</li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p>No deployments currently report unreachable metrics.</p>
+  {% endif %}
 </section>
 {% endblock %}
