@@ -16,6 +16,15 @@ _ALLOWED_SGLANG_EXTRA_ARGS = {
     "chunked_prefill_size",
 }
 _ALLOWED_SGLANG_ADVANCED = {"trust_remote_code", "enable_cache_report", "enable_metrics"}
+_SECRET_LIKE_ENV_KEY_RE = re.compile(
+    r"(^|_)(token|secret|password|passwd|pwd|api_?key|private_?key|access_?key|client_?secret)($|_)",
+    re.IGNORECASE,
+)
+
+
+def _is_secret_like_key(key: object) -> bool:
+    normalized = re.sub(r"[^a-zA-Z0-9]+", "_", str(key)).strip("_")
+    return bool(_SECRET_LIKE_ENV_KEY_RE.search(normalized))
 
 
 class DockerVolume(BaseModel):
@@ -66,6 +75,11 @@ class DockerConfig(BaseModel):
         for key, value in self.env.items():
             if key.startswith("-") or "\n" in key or "\n" in value:
                 raise ValueError("environment variables must be structured key/value strings")
+            if _is_secret_like_key(key):
+                raise ValueError(
+                    "docker_config.env must not contain secret-like keys; use an external "
+                    "secret store or opaque reference instead"
+                )
         return self
 
     @field_validator("gpus", "network", "user", "ipc", "shm_size")
@@ -170,6 +184,25 @@ class DeploymentRead(BaseModel):
     last_job_id: int | None
     last_error_code: str | None
     last_error_message: str | None
+
+    @model_validator(mode="after")
+    def redact_sensitive_read_fields(self) -> "DeploymentRead":
+        secrets = _collect_config_secrets(
+            {
+                "model_path": self.model_path,
+                "docker_config": self.docker_config,
+                "sglang_config": self.sglang_config,
+                "last_health_status": self.last_health_status,
+                "last_error_message": self.last_error_message,
+            }
+        )
+        self.docker_config = _mask_config_value(self.docker_config, secrets)
+        self.sglang_config = _mask_config_value(self.sglang_config, secrets)
+        self.last_command_preview = mask_secret(self.last_command_preview, secrets)
+        self.last_health_status = _mask_config_value(self.last_health_status, secrets)
+        self.last_error_message = mask_secret(self.last_error_message, secrets)
+        self.model_path = mask_secret(self.model_path, secrets)
+        return self
 
 
 class DeployRequest(BaseModel):

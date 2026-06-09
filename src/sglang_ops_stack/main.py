@@ -43,6 +43,8 @@ def _sanitize_validation_errors(errors: Sequence[Any]) -> list[dict[str, Any]]:
     for error in errors:
         item = dict(error)
         item.pop("input", None)
+        if isinstance(item.get("ctx"), dict):
+            item["ctx"] = {key: str(value) for key, value in item["ctx"].items()}
         sanitized.append(item)
     return sanitized
 

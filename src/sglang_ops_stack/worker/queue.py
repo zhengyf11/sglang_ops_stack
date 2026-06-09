@@ -105,7 +105,12 @@ def decrypt_password(token: str, active_settings: Settings | None = None) -> str
 
 
 def _secret_key(active_settings: Settings) -> bytes:
-    material = active_settings.secret_key or active_settings.auth_secret_key
+    material = active_settings.auth_secret_key
+    if active_settings.task_queue_mode == "celery" and material == "dev-only-change-me":
+        raise RuntimeError(
+            "SGLANG_OPS_AUTH_SECRET_KEY must be set to a non-default value when "
+            "SGLANG_OPS_TASK_QUEUE_MODE=celery"
+        )
     return hashlib.sha256(material.encode("utf-8")).digest()
 
 

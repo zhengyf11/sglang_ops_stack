@@ -53,7 +53,7 @@ def _deployment(db_session: Session, status: str = "running"):
             image="lmsysorg/sglang:latest",
             model_path="/models/private",
             docker_config=DockerConfig(
-                env={"HF_TOKEN": "secret-token"},
+                env={"MODEL_ALIAS": "secret-token"},
                 volumes=[
                     DockerVolume(host_path="/host/private", container_path="/models", mode="ro")
                 ],

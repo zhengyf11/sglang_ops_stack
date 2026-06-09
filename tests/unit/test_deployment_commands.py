@@ -41,7 +41,7 @@ def test_deployment_preview_uses_command_specs_and_masks_sensitive_values() -> N
         image="lmsysorg/sglang:latest",
         model_path="/srv/private/model-a",
         docker_config=DockerConfig(
-            env={"HF_TOKEN": "secret-token"},
+            env={"MODEL_ALIAS": "secret-token"},
             volumes=[DockerVolume(host_path="/srv/private", container_path="/models", mode="ro")],
         ),
     )

@@ -9,7 +9,8 @@ Redis, and PostgreSQL. It is intended for a trusted private network only.
   trusted internal load balancer/VPN and terminate TLS at the trusted edge.
 - Use a unique high-entropy `SGLANG_OPS_AUTH_SECRET_KEY` in every environment. Rotating this
   key invalidates existing JWT sessions; perform rotation during a maintenance window and ask
-  users to log in again.
+  users to log in again. Celery mode derives SSH credential encryption keys from this value and
+  fails closed when it is left at the development default.
 - SSH passwords remain request/session credentials for job execution. They are not persisted by
   the application. In Celery mode, task payloads carry only application-encrypted short-lived
   credential material derived from `SGLANG_OPS_AUTH_SECRET_KEY`; plaintext passwords are never sent

@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from sglang_ops_stack.api.deps import require_role
 from sglang_ops_stack.api.schemas.deployment import (
     DeploymentCreate,
+    DeploymentRead,
     DeploymentRevisionRead,
     DockerConfig,
 )
@@ -83,10 +84,14 @@ def index(request: Request, db: DbSession) -> HTMLResponse:
 
 @router.get("/deployments", response_class=HTMLResponse)
 def deployments_page(request: Request, db: DbSession) -> HTMLResponse:
+    deployments = [
+        DeploymentRead.model_validate(deployment)
+        for deployment in deployment_service.list_deployments(db)
+    ]
     return templates.TemplateResponse(
         request,
         "deployments/list.html",
-        {"deployments": deployment_service.list_deployments(db)},
+        {"deployments": deployments},
     )
 
 
@@ -154,11 +159,12 @@ def deployment_detail_page(deployment_id: int, request: Request, db: DbSession) 
     can_restart = deployment.status in {"running", "degraded", "failed"}
     can_stop = deployment.status in {"running", "degraded", "failed"}
     can_start = deployment.status in {"stopped", "failed"}
+    redacted_deployment = DeploymentRead.model_validate(deployment)
     return templates.TemplateResponse(
         request,
         "deployments/detail.html",
         {
-            "deployment": deployment,
+            "deployment": redacted_deployment,
             "job": job,
             "logs": logs,
             "monitoring": monitoring,

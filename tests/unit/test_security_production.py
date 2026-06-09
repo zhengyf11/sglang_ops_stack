@@ -77,7 +77,7 @@ def test_worker_queue_feature_flag_and_enqueue(monkeypatch) -> None:  # type: ig
     settings = Settings(
         task_queue_mode="celery",
         redis_url="redis://redis:6379/0",
-        secret_key="test-secret-key-value",
+        auth_secret_key="test-auth-secret-key-value",
     )
     assert should_use_worker_queue(settings) is True
     calls: list[tuple[str, dict[str, object]]] = []
@@ -107,10 +107,77 @@ def test_worker_queue_feature_flag_and_enqueue(monkeypatch) -> None:  # type: ig
     assert "encrypted_password" in payload
 
 
+def test_worker_queue_rejects_default_auth_secret_key_in_celery_mode() -> None:
+    settings = Settings(task_queue_mode="celery", redis_url="redis://redis:6379/0")
+
+    with pytest.raises(RuntimeError, match="SGLANG_OPS_AUTH_SECRET_KEY"):
+        enqueue_job(settings, "ssh_connect_check", 42, "secret")
+
+
+def test_worker_queue_uses_auth_secret_key_not_legacy_secret_key(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    settings = Settings(
+        task_queue_mode="celery",
+        redis_url="redis://redis:6379/0",
+        auth_secret_key="non-default-auth-secret",
+        secret_key="dev-only-secret-key",
+    )
+    calls: list[dict[str, object]] = []
+
+    class FakeTask:
+        def delay(self, payload: dict[str, object]) -> None:
+            calls.append(payload)
+
+    monkeypatch.setattr("sglang_ops_stack.worker.queue.dispatch_job", FakeTask())
+
+    assert enqueue_job(settings, "ssh_connect_check", 42, "secret") is True
+    assert calls
+    assert "secret" not in str(calls[0])
+
+
 def test_worker_queue_falls_back_for_development() -> None:
     settings = Settings(task_queue_mode="background", redis_url="redis://redis:6379/0")
     assert should_use_worker_queue(settings) is False
     assert enqueue_job(settings, "ssh_connect_check", 42, "secret") is False
+
+
+@pytest.mark.parametrize(
+    "env_key",
+    [
+        "HF_TOKEN",
+        "API_KEY",
+        "OPENAI_API_KEY",
+        "AWS_SECRET_ACCESS_KEY",
+        "DB_PASSWORD",
+        "SSL_PRIVATE_KEY",
+    ],
+)
+def test_deployment_schema_rejects_secret_like_docker_env_keys(env_key: str) -> None:
+    payload = {
+        "host_id": 1,
+        "name": "demo",
+        "container_name": "sglang_demo",
+        "image": "lmsysorg/sglang:latest",
+        "model_path": "/models/demo",
+        "docker_config": {"env": {env_key: "plaintext-secret"}},
+    }
+
+    with pytest.raises(ValidationError):
+        DeploymentCreate.model_validate(payload)
+
+
+def test_deployment_schema_allows_non_sensitive_docker_env_keys() -> None:
+    payload = {
+        "host_id": 1,
+        "name": "demo",
+        "container_name": "sglang_demo",
+        "image": "lmsysorg/sglang:latest",
+        "model_path": "/models/demo",
+        "docker_config": {"env": {"LOG_LEVEL": "debug", "NCCL_DEBUG": "INFO"}},
+    }
+
+    deployment = DeploymentCreate.model_validate(payload)
+
+    assert deployment.docker_config.env == {"LOG_LEVEL": "debug", "NCCL_DEBUG": "INFO"}
 
 
 @pytest.mark.parametrize(
