@@ -105,7 +105,9 @@ class HealthService:
         )
 
         target_port = deployment.port if port is None else port
-        target_service_url = service_url or deployment.service_url or f"http://{host.ip}:{target_port}"
+        target_service_url = (
+            service_url or deployment.service_url or f"http://{host.ip}:{target_port}"
+        )
         client = self.client_factory(target_service_url)
         health = client.health()
         layers.append(

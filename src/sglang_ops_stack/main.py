@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from sglang_ops_stack.api.routers import (
+    auth,
     deployments,
     health,
     hosts,
@@ -22,14 +23,17 @@ from sglang_ops_stack.core.logging import configure_logging
 from sglang_ops_stack.core.security import build_security_config
 from sglang_ops_stack.db.base import Base
 from sglang_ops_stack.db.models import (  # noqa: F401
+    AuditLog,
     Deployment,
     DeploymentRevision,
     Host,
     Job,
     JobLog,
     MonitoringConfig,
+    User,
 )
-from sglang_ops_stack.db.session import engine
+from sglang_ops_stack.db.session import SessionLocal, engine
+from sglang_ops_stack.services import user_service
 
 STATIC_DIR = Path(__file__).resolve().parent / "web" / "static"
 
@@ -41,6 +45,19 @@ def _sanitize_validation_errors(errors: Sequence[Any]) -> list[dict[str, Any]]:
         item.pop("input", None)
         sanitized.append(item)
     return sanitized
+
+
+def _bootstrap_admin_user() -> None:
+    settings = get_settings()
+    if not settings.bootstrap_admin_username or not settings.bootstrap_admin_password:
+        return
+    with SessionLocal() as db:
+        user_service.create_user(
+            db,
+            username=settings.bootstrap_admin_username,
+            password=settings.bootstrap_admin_password,
+            role="admin",
+        )
 
 
 @asynccontextmanager
@@ -65,8 +82,11 @@ def create_app() -> FastAPI:
     )
     security_config = build_security_config(settings)
     app.state.security = security_config
-    Base.metadata.create_all(bind=engine)
+    if settings.environment.lower() != "production":
+        Base.metadata.create_all(bind=engine)
+    _bootstrap_admin_user()
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+    app.include_router(auth.router)
     app.include_router(health.router)
     app.include_router(hosts.router)
     app.include_router(jobs.router)

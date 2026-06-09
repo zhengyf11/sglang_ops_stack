@@ -179,8 +179,7 @@ class HostCheckCommandBuilder:
                 timeout_seconds=120,
                 risk=CommandRisk.package_install,
                 description=(
-                    "Refresh apt package index after adding NVIDIA Container Toolkit "
-                    "repository"
+                    "Refresh apt package index after adding NVIDIA Container Toolkit repository"
                 ),
             ),
             CommandSpec(

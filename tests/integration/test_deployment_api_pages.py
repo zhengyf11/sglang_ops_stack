@@ -166,9 +166,7 @@ def test_revision_api_and_page_redact_snapshot_secrets(client: TestClient) -> No
         "model_path": "/models/secret",
         "docker_config": {
             "env": {"HF_TOKEN": "secret-token"},
-            "volumes": [
-                {"host_path": "/host/private", "container_path": "/models", "mode": "ro"}
-            ],
+            "volumes": [{"host_path": "/host/private", "container_path": "/models", "mode": "ro"}],
         },
     }
     create = client.post("/api/deployments", json=payload)

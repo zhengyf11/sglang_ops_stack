@@ -100,8 +100,6 @@ def test_nvidia_runtime_install_plan_is_complete_for_clean_ubuntu_lts() -> None:
     assert repo_spec.stdin is not None
     assert "nvidia.github.io/libnvidia-container/stable/deb" in repo_spec.stdin
     assert "|" not in repo_spec.command_line()
-    keyring_spec = next(
-        spec for spec in specs if spec.id == "nvidia_runtime.install_gpg_keyring"
-    )
+    keyring_spec = next(spec for spec in specs if spec.id == "nvidia_runtime.install_gpg_keyring")
     assert "--yes" in keyring_spec.args
     assert "apt-get update" in specs[4].command_line()

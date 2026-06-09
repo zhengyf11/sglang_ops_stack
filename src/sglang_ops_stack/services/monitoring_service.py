@@ -232,8 +232,7 @@ def _grafana_template_is_allowed(template: str) -> bool:
     except ValueError:
         return False
     return all(
-        field_name is None or field_name in _GRAFANA_TEMPLATE_FIELDS
-        for field_name in fields
+        field_name is None or field_name in _GRAFANA_TEMPLATE_FIELDS for field_name in fields
     )
 
 
