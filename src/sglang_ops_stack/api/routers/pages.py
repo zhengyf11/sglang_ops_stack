@@ -12,6 +12,7 @@ from sglang_ops_stack.api.schemas.deployment import (
     DockerConfig,
 )
 from sglang_ops_stack.api.schemas.host import HostCreate, HostUpdate
+from sglang_ops_stack.api.schemas.monitoring import MonitoringConfigUpsert
 from sglang_ops_stack.db.models.host import Host
 from sglang_ops_stack.db.session import get_db
 from sglang_ops_stack.domain_enums import JobStatus, JobType
@@ -23,6 +24,7 @@ from sglang_ops_stack.services import (
     deployment_service,
     host_service,
     job_service,
+    monitoring_service,
     operation_service,
     redeploy_service,
 )
@@ -43,8 +45,15 @@ def _redirect(path: str) -> RedirectResponse:
 
 
 @router.get("/", response_class=HTMLResponse, include_in_schema=False)
-def index(request: Request) -> HTMLResponse:
-    return templates.TemplateResponse(request, "dashboard.html", {})
+def index(request: Request, db: DbSession) -> HTMLResponse:
+    hosts = host_service.list_hosts(db)
+    deployments = deployment_service.list_deployments(db)
+    summary = monitoring_service.dashboard_summary(db, hosts=hosts, deployments=deployments)
+    return templates.TemplateResponse(
+        request,
+        "dashboard.html",
+        {"summary": summary, "deployments": deployments},
+    )
 
 
 @router.get("/deployments", response_class=HTMLResponse)
@@ -98,6 +107,16 @@ def deployment_detail_page(deployment_id: int, request: Request, db: DbSession) 
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Deployment not found")
     job = job_service.get_job(db, deployment.last_job_id) if deployment.last_job_id else None
     logs = job_service.list_logs(db, job.id) if job else []
+    host = db.get(Host, deployment.host_id)
+    config = monitoring_service.get_config(db)
+    monitoring = None
+    if host is not None:
+        monitoring = {
+            "target": monitoring_service.build_metrics_target(host, deployment),
+            "scrape_config": monitoring_service.build_prometheus_scrape_config(host, deployment),
+            "links": monitoring_service.build_monitoring_links(config, host, deployment),
+            "metrics_status": monitoring_service.metrics_status_from_health(deployment),
+        }
     can_restart = deployment.status in {"running", "degraded", "failed"}
     can_stop = deployment.status in {"running", "degraded", "failed"}
     can_start = deployment.status in {"stopped", "failed"}
@@ -108,6 +127,7 @@ def deployment_detail_page(deployment_id: int, request: Request, db: DbSession) 
             "deployment": deployment,
             "job": job,
             "logs": logs,
+            "monitoring": monitoring,
             "can_restart": can_restart,
             "can_stop": can_stop,
             "can_start": can_start,
@@ -433,6 +453,42 @@ def confirm_install_page(
         )
     background_tasks.add_task(confirm_environment_install_task, job.id, password, True)
     return _redirect(f"/jobs/{job.id}")
+
+
+@router.get("/monitoring", response_class=HTMLResponse)
+def monitoring_page(request: Request, db: DbSession) -> HTMLResponse:
+    return templates.TemplateResponse(
+        request,
+        "monitoring/config.html",
+        {"config": monitoring_service.get_config(db), "error": None},
+    )
+
+
+@router.post("/monitoring", response_class=HTMLResponse, response_model=None)
+def monitoring_submit_page(
+    request: Request,
+    db: DbSession,
+    prometheus_base_url: Annotated[str | None, Form()] = None,
+    grafana_base_url: Annotated[str | None, Form()] = None,
+    default_dashboard_path: Annotated[str | None, Form()] = None,
+) -> HTMLResponse | RedirectResponse:
+    try:
+        monitoring_service.upsert_config(
+            db,
+            MonitoringConfigUpsert(
+                prometheus_base_url=prometheus_base_url,
+                grafana_base_url=grafana_base_url,
+                default_dashboard_path=default_dashboard_path,
+            ),
+        )
+    except ValueError as exc:
+        return templates.TemplateResponse(
+            request,
+            "monitoring/config.html",
+            {"config": monitoring_service.get_config(db), "error": str(exc)},
+            status_code=status.HTTP_400_BAD_REQUEST,
+        )
+    return _redirect("/monitoring")
 
 
 @router.post("/jobs/{job_id}/retry")

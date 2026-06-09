@@ -8,7 +8,15 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from sglang_ops_stack.api.routers import deployments, health, hosts, jobs, operations, pages
+from sglang_ops_stack.api.routers import (
+    deployments,
+    health,
+    hosts,
+    jobs,
+    monitoring,
+    operations,
+    pages,
+)
 from sglang_ops_stack.config import get_settings
 from sglang_ops_stack.core.logging import configure_logging
 from sglang_ops_stack.core.security import build_security_config
@@ -19,6 +27,7 @@ from sglang_ops_stack.db.models import (  # noqa: F401
     Host,
     Job,
     JobLog,
+    MonitoringConfig,
 )
 from sglang_ops_stack.db.session import engine
 
@@ -63,6 +72,7 @@ def create_app() -> FastAPI:
     app.include_router(jobs.router)
     app.include_router(deployments.router)
     app.include_router(operations.router)
+    app.include_router(monitoring.router)
     app.include_router(pages.router)
 
     @app.middleware("http")

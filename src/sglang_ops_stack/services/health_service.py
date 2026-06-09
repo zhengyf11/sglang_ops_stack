@@ -9,6 +9,7 @@ from sglang_ops_stack.db.models.deployment import Deployment
 from sglang_ops_stack.db.models.host import Host
 from sglang_ops_stack.remote.executor import SSHExecutionError, SSHExecutor
 from sglang_ops_stack.remote.result import CommandResult
+from sglang_ops_stack.services import monitoring_service
 
 
 @dataclass(frozen=True)
@@ -144,6 +145,37 @@ class HealthService:
                 message=load_message,
                 checked_at=checked_at,
                 details={"status_code": load.status_code, "payload": load.payload},
+            )
+        )
+        if deployment.metrics_url is None:
+            layers.append(
+                HealthLayerResult(
+                    name="metrics",
+                    status="SKIPPED",
+                    message="Metrics endpoint is disabled for this deployment",
+                    checked_at=checked_at,
+                    details={"metrics_url": None, "reachable": None},
+                )
+            )
+            return self._aggregate(layers, checked_at)
+        metrics = client.metrics()
+        metrics_text_ok = monitoring_service.metrics_response_is_prometheus_text(metrics.payload)
+        metrics_ok = metrics.ok and metrics_text_ok
+        layers.append(
+            HealthLayerResult(
+                name="metrics",
+                status="OK" if metrics_ok else "WARN",
+                message=(
+                    "HTTP /metrics Prometheus text available"
+                    if metrics_ok
+                    else (metrics.error or "HTTP /metrics unavailable or invalid")
+                ),
+                checked_at=checked_at,
+                details={
+                    "status_code": metrics.status_code,
+                    "metrics_url": deployment.metrics_url,
+                    "reachable": metrics_ok,
+                },
             )
         )
         return self._aggregate(layers, checked_at)

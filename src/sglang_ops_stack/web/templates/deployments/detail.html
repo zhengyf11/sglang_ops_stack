@@ -19,6 +19,22 @@
     <a href="/deployments/{{ deployment.id }}/revisions">Revision history</a>
   </p>
 
+  <h3>Monitoring</h3>
+  {% if monitoring %}
+  <dl>
+    <dt>Metrics target</dt><dd>{{ monitoring.target.prometheus_target if monitoring.target else '-' }}</dd>
+    <dt>Metrics URL</dt><dd>{{ monitoring.target.metrics_url if monitoring.target else deployment.metrics_url or '-' }}</dd>
+    <dt>Metrics reachability</dt><dd>{{ monitoring.metrics_status.status }} · {{ monitoring.metrics_status.message }}</dd>
+  </dl>
+  <p>
+    {% if monitoring.links.grafana_url %}<a href="{{ monitoring.links.grafana_url }}" target="_blank" rel="noopener noreferrer">Open Grafana</a>{% else %}<a href="/monitoring">Configure Grafana</a>{% endif %}
+    ·
+    {% if monitoring.links.prometheus_targets_url %}<a href="{{ monitoring.links.prometheus_targets_url }}" target="_blank" rel="noopener noreferrer">Prometheus targets</a>{% else %}<a href="/monitoring">Configure Prometheus</a>{% endif %}
+  </p>
+  <h4>Prometheus scrape config</h4>
+  {% if monitoring.scrape_config %}<pre>{{ monitoring.scrape_config }}</pre>{% else %}<p>Metrics are disabled for this deployment.</p>{% endif %}
+  {% else %}<p>Monitoring data is unavailable because the deployment host no longer exists.</p>{% endif %}
+
   <h3>Operations</h3>
   <form method="post" action="/deployments/{{ deployment.id }}/operations/restart" style="display:inline">
     <input name="password" type="password" placeholder="SSH password" required>
