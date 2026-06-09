@@ -42,6 +42,8 @@ class DockerCommandBuilder:
             args.append("--privileged")
         if self.config.user:
             args.extend(("--user", self.config.user))
+        if self.config.ipc:
+            args.extend(("--ipc", self.config.ipc))
         if self.config.shm_size:
             args.extend(("--shm-size", self.config.shm_size))
         if self.config.network != "host":
@@ -89,6 +91,39 @@ class DockerCommandBuilder:
             description="Inspect container running state",
         )
 
+    def restart(self) -> CommandSpec:
+        return CommandSpec(
+            id="deployment.docker_restart",
+            executable="docker",
+            args=("restart", self.container_name),
+            timeout_seconds=120,
+            allowed_exit_codes=(0,),
+            risk=CommandRisk.service_change,
+            description="Restart managed deployment container",
+        )
+
+    def stop(self) -> CommandSpec:
+        return CommandSpec(
+            id="deployment.docker_stop",
+            executable="docker",
+            args=("stop", self.container_name),
+            timeout_seconds=120,
+            allowed_exit_codes=(0, 1),
+            risk=CommandRisk.service_change,
+            description="Stop managed deployment container",
+        )
+
+    def start(self) -> CommandSpec:
+        return CommandSpec(
+            id="deployment.docker_start",
+            executable="docker",
+            args=("start", self.container_name),
+            timeout_seconds=120,
+            allowed_exit_codes=(0,),
+            risk=CommandRisk.service_change,
+            description="Start managed deployment container",
+        )
+
     def logs_tail(self, lines: int = 100) -> CommandSpec:
         return CommandSpec(
             id="deployment.docker_logs",
@@ -116,6 +151,8 @@ def docker_risk_warnings(config: DockerConfig) -> list[str]:
         warnings.append("Risk: --privileged grants broad host capabilities to the container.")
     if config.network == "host":
         warnings.append("Risk: --network host exposes the service directly on the host network.")
+    if config.ipc == "host":
+        warnings.append("Risk: --ipc host shares the host IPC namespace with the container.")
     if config.user in (None, "", "root", "0"):
         warnings.append("Risk: container process runs as root user by default.")
     if config.gpus == "all":

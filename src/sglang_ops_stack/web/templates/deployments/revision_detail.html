@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Revision {{ revision.revision_no }} · {{ deployment.name }}{% endblock %}
+{% block content %}
+<section>
+  <h2>Revision {{ revision.revision_no }} for {{ deployment.name }}</h2>
+  <dl>
+    <dt>ID</dt><dd>{{ revision.id }}</dd>
+    <dt>Summary</dt><dd>{{ revision.change_summary or '-' }}</dd>
+    <dt>Created by</dt><dd>{{ revision.created_by or '-' }}</dd>
+  </dl>
+  <h3>Command preview (redacted)</h3>
+  <pre>{{ revision.command_preview }}</pre>
+  <h3>Configuration snapshot</h3>
+  <pre>{{ revision.config_snapshot }}</pre>
+  <p><a href="/deployments/{{ deployment.id }}/revisions">Back to revisions</a></p>
+</section>
+{% endblock %}

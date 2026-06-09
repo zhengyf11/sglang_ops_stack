@@ -1,7 +1,9 @@
 import re
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from sglang_ops_stack.utils.masking import mask_secret
 
 _CONTAINER_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.-]+$")
 _IMAGE_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._:/@-]{0,511}$")
@@ -46,6 +48,7 @@ class DockerConfig(BaseModel):
     network: str | None = Field(default="host")
     privileged: bool = False
     user: str | None = None
+    ipc: str | None = None
     shm_size: str | None = None
     remove_existing: bool = False
 
@@ -163,3 +166,93 @@ class DeployRequest(BaseModel):
 class DeploymentPreview(BaseModel):
     command_preview: str
     risk_warnings: list[str]
+
+
+class OperationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=False)
+
+    password: str = Field(min_length=1)
+
+
+class OperationResponse(BaseModel):
+    job_id: int
+    status: str
+    operation: Literal["restart", "stop", "start"]
+
+
+class DeploymentLogsResponse(BaseModel):
+    deployment_id: int
+    tail: int
+    logs: str
+
+
+class DeploymentDiffItem(BaseModel):
+    field: str
+    old_value: Any
+    new_value: Any
+    risk: str | None = None
+
+
+class RedeployPlan(BaseModel):
+    command_preview: str
+    risk_warnings: list[str]
+    diff: list[DeploymentDiffItem]
+    high_risk: bool
+    requires_confirmation: bool
+
+
+class RedeployRequest(DeploymentCreate):
+    password: str = Field(min_length=1)
+    confirm_high_risk: bool = False
+
+
+class RedeployResponse(BaseModel):
+    job_id: int
+    status: str
+    high_risk: bool
+
+
+def _collect_config_secrets(value: Any) -> list[str]:
+    secrets: list[str] = []
+    if isinstance(value, dict):
+        for key, item in value.items():
+            key_lower = str(key).lower()
+            if isinstance(item, str) and (
+                key_lower in {"model_path", "host_path", "container_path"}
+                or any(token in key_lower for token in ("password", "token", "key", "secret"))
+            ):
+                secrets.append(item)
+            secrets.extend(_collect_config_secrets(item))
+    elif isinstance(value, list):
+        for item in value:
+            secrets.extend(_collect_config_secrets(item))
+    return [secret for secret in secrets if secret]
+
+
+def _mask_config_value(value: Any, secrets: list[str]) -> Any:
+    if isinstance(value, str):
+        return mask_secret(value, secrets)
+    if isinstance(value, list):
+        return [_mask_config_value(item, secrets) for item in value]
+    if isinstance(value, dict):
+        return {key: _mask_config_value(item, secrets) for key, item in value.items()}
+    return value
+
+
+class DeploymentRevisionRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    deployment_id: int
+    revision_no: int
+    config_snapshot: dict[str, Any]
+    command_preview: str
+    change_summary: str | None
+    created_by: str | None
+
+    @model_validator(mode="after")
+    def redact_snapshot(self) -> "DeploymentRevisionRead":
+        secrets = _collect_config_secrets(self.config_snapshot)
+        self.config_snapshot = _mask_config_value(self.config_snapshot, secrets)
+        self.command_preview = mask_secret(self.command_preview, secrets)
+        return self

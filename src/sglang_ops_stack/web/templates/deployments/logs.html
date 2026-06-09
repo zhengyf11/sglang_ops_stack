@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Logs · {{ deployment.name }}{% endblock %}
+{% block content %}
+<section>
+  <h2>Container logs for {{ deployment.name }}</h2>
+  <p>Logs are fetched through the managed Docker logs command, capped at 500 lines, and redacted.</p>
+  <form method="post" action="/deployments/{{ deployment.id }}/logs">
+    <label>SSH password <input name="password" type="password" required></label>
+    <label>Tail lines <input name="tail" type="number" min="1" max="500" value="100"></label>
+    <button type="submit">Fetch redacted logs</button>
+  </form>
+  {% if log_text is defined %}
+  <h3>Redacted logs (tail={{ tail }})</h3>
+  <pre>{{ log_text }}</pre>
+  {% endif %}
+  <p><a href="/deployments/{{ deployment.id }}">Back to deployment</a></p>
+</section>
+{% endblock %}

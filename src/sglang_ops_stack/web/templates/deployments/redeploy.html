@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Redeploy · {{ deployment.name }}{% endblock %}
+{% block content %}
+<section>
+  <h2>Redeploy {{ deployment.name }}</h2>
+  <form method="post" action="/deployments/{{ deployment.id }}/redeploy">
+    <label>Name <input name="name" value="{{ payload.name }}" required></label>
+    <label>Container <input name="container_name" value="{{ payload.container_name }}" required></label>
+    <label>Image <input name="image" value="{{ payload.image }}" required></label>
+    <label>Model path <input name="model_path" placeholder="Leave blank to keep current model path"></label>
+    <label>Port <input name="port" type="number" value="{{ payload.port }}" required></label>
+    <label>SSH password <input name="password" type="password" required></label>
+    <label><input name="privileged" type="checkbox" value="yes"> Enable --privileged (high risk)</label>
+    <label><input name="confirm_high_risk" type="checkbox" value="yes"> Confirm high-risk Docker/volume changes</label>
+    <button type="submit">Start stop-and-replace redeploy</button>
+  </form>
+  <h3>Diff preview</h3>
+  {% if plan.diff %}
+  <table><thead><tr><th>Field</th><th>Old</th><th>New</th><th>Risk</th></tr></thead><tbody>
+  {% for item in plan.diff %}<tr><td>{{ item.field }}</td><td>{{ item.old_value }}</td><td>{{ item.new_value }}</td><td>{{ item.risk or '-' }}</td></tr>{% endfor %}
+  </tbody></table>
+  {% else %}<p>No changes yet.</p>{% endif %}
+  <h3>Risk warnings</h3><ul>{% for warning in plan.risk_warnings %}<li>{{ warning }}</li>{% endfor %}</ul>
+  <pre>{{ plan.command_preview }}</pre>
+</section>
+{% endblock %}

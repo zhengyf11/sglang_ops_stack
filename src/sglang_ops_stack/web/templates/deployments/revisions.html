@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Revisions · {{ deployment.name }}{% endblock %}
+{% block content %}
+<section>
+  <h2>Revision history for {{ deployment.name }}</h2>
+  <table>
+    <thead><tr><th>Revision</th><th>ID</th><th>Summary</th><th>Created by</th><th>Details</th></tr></thead>
+    <tbody>
+    {% for revision in revisions %}
+      <tr>
+        <td>{{ revision.revision_no }}</td>
+        <td>{{ revision.id }}</td>
+        <td>{{ revision.change_summary or '-' }}</td>
+        <td>{{ revision.created_by or '-' }}</td>
+        <td><a href="/deployments/{{ deployment.id }}/revisions/{{ revision.id }}">View</a></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}
