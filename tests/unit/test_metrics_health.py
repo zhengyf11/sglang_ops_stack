@@ -45,6 +45,49 @@ class _FakeClient:
         return SGLangHTTPResponse(self.metrics_ok, status_code, {"text": self.metrics_text})
 
 
+def test_disabled_metrics_health_layer_is_skipped_without_metrics_probe(db_session: Any) -> None:
+    host = host_service.create_host(db_session, HostCreate(name="gpu-1", ip="10.0.0.1"))
+    deployment = deployment_service.create_deployment(
+        db_session,
+        DeploymentCreate(
+            host_id=host.id,
+            name="demo",
+            container_name="sglang_demo",
+            image="lmsysorg/sglang:latest",
+            model_path="/models/demo",
+            sglang_config={"enable_metrics": False},
+        ),
+    )
+    calls = {"metrics": 0}
+
+    class DisabledMetricsClient(_FakeClient):
+        def metrics(self) -> SGLangHTTPResponse:
+            calls["metrics"] += 1
+            return super().metrics()
+
+    health = HealthService(
+        executor=_FakeExecutor(),
+        client_factory=lambda base_url: DisabledMetricsClient(base_url=base_url),
+    ).check_deployment(
+        host=host,
+        deployment=deployment,
+        password="pw",
+        docker_builder=DockerCommandBuilder(
+            image=deployment.image,
+            container_name=deployment.container_name,
+            port=deployment.port,
+            config=DockerConfig(),
+        ),
+    )
+
+    assert health["status"] == "OK"
+    assert calls["metrics"] == 0
+    metrics_layer = next(layer for layer in health["layers"] if layer["name"] == "metrics")
+    assert metrics_layer["status"] == "SKIPPED"
+    assert metrics_layer["details"]["reachable"] is None
+    assert metrics_layer["details"]["metrics_url"] is None
+
+
 def test_metrics_health_layer_is_warning_when_metrics_unreachable(db_session: Any) -> None:
     host = host_service.create_host(db_session, HostCreate(name="gpu-1", ip="10.0.0.1"))
     deployment = deployment_service.create_deployment(

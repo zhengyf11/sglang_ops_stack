@@ -83,3 +83,36 @@ def test_metrics_target_scrape_config_and_links(db_session: Session) -> None:
     assert "var-port=30000" in links.grafana_url
     assert links.prometheus_targets_url is not None
     assert links.prometheus_targets_url.startswith("http://prometheus.local:9090/targets")
+
+
+def test_invalid_grafana_dashboard_template_is_ignored(db_session: Session) -> None:
+    host, deployment = _create_deployment(db_session)
+    config = monitoring_service.upsert_config(
+        db_session,
+        MonitoringConfigUpsert(
+            grafana_base_url="http://grafana.local",
+            default_dashboard_path="/d/sglang/overview?var-deployment={deployment}&var-bad={unknown}",
+        ),
+    )
+
+    links = monitoring_service.build_monitoring_links(config, host, deployment)
+
+    assert links.grafana_url is None
+
+
+def test_disabled_metrics_are_not_dashboard_unreachable(db_session: Session) -> None:
+    host, deployment = _create_deployment(db_session)
+    deployment.metrics_url = None
+    db_session.add(deployment)
+    db_session.commit()
+
+    status = monitoring_service.metrics_status_from_health(deployment)
+    summary = monitoring_service.dashboard_summary(
+        db_session,
+        hosts=[host],
+        deployments=[deployment],
+    )
+
+    assert status["status"] == "DISABLED"
+    assert status["reachable"] is None
+    assert summary.metrics_unreachable == []

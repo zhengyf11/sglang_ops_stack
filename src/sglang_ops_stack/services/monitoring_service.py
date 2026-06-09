@@ -1,4 +1,5 @@
 import re
+import string
 from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -19,6 +20,7 @@ from sglang_ops_stack.db.models.monitoring import MonitoringConfig
 
 _PROMETHEUS_TEXT_MARKERS = ("# HELP", "# TYPE", "_total", "{}")
 _JOB_SAFE_RE = re.compile(r"[^a-zA-Z0-9_-]+")
+_GRAFANA_TEMPLATE_FIELDS = {"deployment", "host", "port", "served_model_name"}
 
 
 @dataclass(frozen=True)
@@ -97,7 +99,7 @@ def metrics_status_from_health(deployment: Deployment) -> dict[str, Any]:
     if deployment.metrics_url is None:
         return {
             "status": "DISABLED",
-            "reachable": False,
+            "reachable": None,
             "message": "Metrics endpoint is disabled for this deployment",
             "metrics_url": None,
         }
@@ -165,7 +167,8 @@ def dashboard_summary(
     metrics_unreachable = [
         deployment
         for deployment in deployment_items
-        if metrics_status_from_health(deployment).get("reachable") is False
+        if deployment.metrics_url is not None
+        and metrics_status_from_health(deployment).get("reachable") is False
     ]
     config = get_config(db)
     return DashboardSummary(
@@ -208,7 +211,12 @@ def _build_grafana_url(config: MonitoringConfig, host: Host, deployment: Deploym
         "port": str(deployment.port),
         "served_model_name": quote(deployment.served_model_name or "", safe=""),
     }
-    rendered = template.format(**values)
+    if not _grafana_template_is_allowed(template):
+        return None
+    try:
+        rendered = template.format(**values)
+    except (KeyError, IndexError, ValueError):
+        return None
     if rendered.startswith(("http://", "https://")):
         return rendered
     base = (config.grafana_base_url or "").rstrip("/")
@@ -216,6 +224,17 @@ def _build_grafana_url(config: MonitoringConfig, host: Host, deployment: Deploym
         return None
     path = rendered if rendered.startswith("/") else f"/{rendered}"
     return f"{base}{path}"
+
+
+def _grafana_template_is_allowed(template: str) -> bool:
+    try:
+        fields = [field_name for _, field_name, _, _ in string.Formatter().parse(template)]
+    except ValueError:
+        return False
+    return all(
+        field_name is None or field_name in _GRAFANA_TEMPLATE_FIELDS
+        for field_name in fields
+    )
 
 
 def _build_prometheus_targets_url(config: MonitoringConfig) -> str | None:

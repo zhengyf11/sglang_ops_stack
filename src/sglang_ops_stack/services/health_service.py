@@ -147,10 +147,20 @@ class HealthService:
                 details={"status_code": load.status_code, "payload": load.payload},
             )
         )
+        if deployment.metrics_url is None:
+            layers.append(
+                HealthLayerResult(
+                    name="metrics",
+                    status="SKIPPED",
+                    message="Metrics endpoint is disabled for this deployment",
+                    checked_at=checked_at,
+                    details={"metrics_url": None, "reachable": None},
+                )
+            )
+            return self._aggregate(layers, checked_at)
         metrics = client.metrics()
         metrics_text_ok = monitoring_service.metrics_response_is_prometheus_text(metrics.payload)
         metrics_ok = metrics.ok and metrics_text_ok
-        metrics_url = deployment.metrics_url or f"{target_service_url.rstrip('/')}/metrics"
         layers.append(
             HealthLayerResult(
                 name="metrics",
@@ -163,7 +173,7 @@ class HealthService:
                 checked_at=checked_at,
                 details={
                     "status_code": metrics.status_code,
-                    "metrics_url": metrics_url,
+                    "metrics_url": deployment.metrics_url,
                     "reachable": metrics_ok,
                 },
             )
