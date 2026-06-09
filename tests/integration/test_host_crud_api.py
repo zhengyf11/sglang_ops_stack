@@ -39,8 +39,7 @@ def test_host_api_rejects_password_field(client: TestClient) -> None:
 
 def test_host_table_has_no_credential_columns(db_session: Session) -> None:
     columns = {
-        column["name"]
-        for column in inspect(db_session.bind).get_columns(Host.__tablename__)
+        column["name"] for column in inspect(db_session.bind).get_columns(Host.__tablename__)
     }
     assert "password" not in columns
     assert "private_key" not in columns

@@ -7,12 +7,14 @@ from alembic import context
 from sglang_ops_stack.config import get_settings
 from sglang_ops_stack.db.base import Base
 from sglang_ops_stack.db.models import (  # noqa: F401
+    AuditLog,
     Deployment,
     DeploymentRevision,
     Host,
     Job,
     JobLog,
     MonitoringConfig,
+    User,
 )
 
 config = context.config

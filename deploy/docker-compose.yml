@@ -1,0 +1,76 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-sglang_ops_stack}
+      POSTGRES_USER: ${POSTGRES_USER:-sglang_ops}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    # Redis is used as a transient Celery broker/backend. Do not enable AOF/RDB
+    # persistence because task payloads may contain short-lived encrypted
+    # credential material that must not be written to disk.
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  web:
+    build:
+      context: ..
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      SGLANG_OPS_ENVIRONMENT: production
+      SGLANG_OPS_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-sglang_ops}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-sglang_ops_stack}
+      SGLANG_OPS_REDIS_URL: redis://redis:6379/0
+      SGLANG_OPS_TASK_QUEUE_MODE: celery
+      SGLANG_OPS_AUTH_SECRET_KEY: ${SGLANG_OPS_AUTH_SECRET_KEY:?set SGLANG_OPS_AUTH_SECRET_KEY}
+      SGLANG_OPS_BOOTSTRAP_ADMIN_USERNAME: ${SGLANG_OPS_BOOTSTRAP_ADMIN_USERNAME:-}
+      SGLANG_OPS_BOOTSTRAP_ADMIN_PASSWORD: ${SGLANG_OPS_BOOTSTRAP_ADMIN_PASSWORD:-}
+      SGLANG_OPS_REQUIRE_HTTPS: ${SGLANG_OPS_REQUIRE_HTTPS:-true}
+      SGLANG_OPS_DOCS_ENABLED: ${SGLANG_OPS_DOCS_ENABLED:-false}
+      SGLANG_OPS_LOG_FORMAT: json
+    ports:
+      - "127.0.0.1:8000:8000"
+    command: ["uvicorn", "sglang_ops_stack.main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+  worker:
+    build:
+      context: ..
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      SGLANG_OPS_ENVIRONMENT: production
+      SGLANG_OPS_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-sglang_ops}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-sglang_ops_stack}
+      SGLANG_OPS_REDIS_URL: redis://redis:6379/0
+      SGLANG_OPS_TASK_QUEUE_MODE: celery
+      SGLANG_OPS_AUTH_SECRET_KEY: ${SGLANG_OPS_AUTH_SECRET_KEY:?set SGLANG_OPS_AUTH_SECRET_KEY}
+      SGLANG_OPS_LOG_FORMAT: json
+    command: ["celery", "-A", "sglang_ops_stack.worker.queue.celery_app", "worker", "--loglevel=INFO"]
+
+volumes:
+  postgres-data:
+  redis-data:

@@ -6,14 +6,18 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
+from sglang_ops_stack.api.deps import require_role
 from sglang_ops_stack.api.schemas.deployment import (
     DeploymentCreate,
+    DeploymentRead,
     DeploymentRevisionRead,
     DockerConfig,
 )
 from sglang_ops_stack.api.schemas.host import HostCreate, HostUpdate
 from sglang_ops_stack.api.schemas.monitoring import MonitoringConfigUpsert
+from sglang_ops_stack.config import get_settings
 from sglang_ops_stack.db.models.host import Host
+from sglang_ops_stack.db.models.user import User
 from sglang_ops_stack.db.session import get_db
 from sglang_ops_stack.domain_enums import JobStatus, JobType
 from sglang_ops_stack.jobs.deployment_jobs import run_deployment_task
@@ -21,6 +25,7 @@ from sglang_ops_stack.jobs.operation_jobs import run_operation_task
 from sglang_ops_stack.jobs.redeploy_jobs import run_redeploy_task
 from sglang_ops_stack.remote.executor import SSHExecutor
 from sglang_ops_stack.services import (
+    audit_service,
     deployment_service,
     host_service,
     job_service,
@@ -33,15 +38,36 @@ from sglang_ops_stack.services.environment.runner import (
     run_environment_check_task,
 )
 from sglang_ops_stack.services.ssh_connect_check import run_ssh_connect_check_task
+from sglang_ops_stack.worker.queue import enqueue_job
 
 TEMPLATE_DIR = Path(__file__).resolve().parents[2] / "web" / "templates"
 templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
 router = APIRouter(tags=["pages"])
 DbSession = Annotated[Session, Depends(get_db)]
+OperatorUser = Annotated[User, Depends(require_role("operator"))]
 
 
 def _redirect(path: str) -> RedirectResponse:
     return RedirectResponse(path, status_code=status.HTTP_303_SEE_OTHER)
+
+
+def _audit_page_event(
+    db: Session,
+    *,
+    event_type: str,
+    actor: User,
+    target_type: str,
+    target_id: int | str | None,
+    summary: dict[str, object] | None = None,
+) -> None:
+    audit_service.record_event(
+        db,
+        event_type=event_type,
+        actor=actor,
+        target_type=target_type,
+        target_id=target_id,
+        summary=summary or {},
+    )
 
 
 @router.get("/", response_class=HTMLResponse, include_in_schema=False)
@@ -58,10 +84,14 @@ def index(request: Request, db: DbSession) -> HTMLResponse:
 
 @router.get("/deployments", response_class=HTMLResponse)
 def deployments_page(request: Request, db: DbSession) -> HTMLResponse:
+    deployments = [
+        DeploymentRead.model_validate(deployment)
+        for deployment in deployment_service.list_deployments(db)
+    ]
     return templates.TemplateResponse(
         request,
         "deployments/list.html",
-        {"deployments": deployment_service.list_deployments(db)},
+        {"deployments": deployments},
     )
 
 
@@ -77,6 +107,7 @@ def new_deployment_page(request: Request, db: DbSession) -> HTMLResponse:
 @router.post("/deployments")
 def create_deployment_page(
     db: DbSession,
+    user: OperatorUser,
     host_id: Annotated[int, Form()],
     name: Annotated[str, Form()],
     container_name: Annotated[str, Form()],
@@ -96,6 +127,14 @@ def create_deployment_page(
             served_model_name=served_model_name,
             port=port,
         ),
+    )
+    _audit_page_event(
+        db,
+        event_type="deployment.create",
+        actor=user,
+        target_type="deployment",
+        target_id=deployment.id,
+        summary={"name": deployment.name, "host_id": deployment.host_id},
     )
     return _redirect(f"/deployments/{deployment.id}")
 
@@ -120,11 +159,12 @@ def deployment_detail_page(deployment_id: int, request: Request, db: DbSession) 
     can_restart = deployment.status in {"running", "degraded", "failed"}
     can_stop = deployment.status in {"running", "degraded", "failed"}
     can_start = deployment.status in {"stopped", "failed"}
+    redacted_deployment = DeploymentRead.model_validate(deployment)
     return templates.TemplateResponse(
         request,
         "deployments/detail.html",
         {
-            "deployment": deployment,
+            "deployment": redacted_deployment,
             "job": job,
             "logs": logs,
             "monitoring": monitoring,
@@ -141,6 +181,7 @@ def deployment_operation_page(
     operation: str,
     background_tasks: BackgroundTasks,
     db: DbSession,
+    user: OperatorUser,
     password: Annotated[str, Form()],
 ) -> RedirectResponse:
     if operation not in {"restart", "stop", "start"}:
@@ -153,7 +194,18 @@ def deployment_operation_page(
         job = operation_service.create_operation_job(db, deployment, typed_operation)
     except operation_service.OperationError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-    background_tasks.add_task(run_operation_task, job.id, typed_operation, password)
+    if not enqueue_job(
+        get_settings(), typed_operation, job.id, password, operation=typed_operation
+    ):
+        background_tasks.add_task(run_operation_task, job.id, typed_operation, password)
+    _audit_page_event(
+        db,
+        event_type=f"deployment.{typed_operation}",
+        actor=user,
+        target_type="deployment",
+        target_id=deployment_id,
+        summary={"job_id": job.id, "operation": typed_operation},
+    )
     return _redirect(f"/jobs/{job.id}")
 
 
@@ -162,6 +214,7 @@ def deploy_deployment_page(
     deployment_id: int,
     background_tasks: BackgroundTasks,
     db: DbSession,
+    user: OperatorUser,
     password: Annotated[str, Form()],
     confirm_remove_existing: Annotated[str | None, Form()] = None,
 ) -> RedirectResponse:
@@ -169,11 +222,22 @@ def deploy_deployment_page(
     if deployment is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Deployment not found")
     job = deployment_service.create_deployment_job(db, deployment)
-    background_tasks.add_task(
-        run_deployment_task,
+    confirmed = confirm_remove_existing == "yes"
+    if not enqueue_job(
+        get_settings(),
+        JobType.deployment.value,
         job.id,
         password,
-        confirm_remove_existing == "yes",
+        confirm_remove_existing=confirmed,
+    ):
+        background_tasks.add_task(run_deployment_task, job.id, password, confirmed)
+    _audit_page_event(
+        db,
+        event_type="deployment.deploy",
+        actor=user,
+        target_type="deployment",
+        target_id=deployment_id,
+        summary={"job_id": job.id, "confirm_remove_existing": confirmed},
     )
     return _redirect(f"/jobs/{job.id}")
 
@@ -191,6 +255,7 @@ def deployment_logs_submit_page(
     deployment_id: int,
     request: Request,
     db: DbSession,
+    user: OperatorUser,
     password: Annotated[str, Form()],
     tail: Annotated[int, Form()] = 100,
 ) -> HTMLResponse:
@@ -207,6 +272,14 @@ def deployment_logs_submit_page(
         password=password,
         tail=tail,
         executor=SSHExecutor(),
+    )
+    _audit_page_event(
+        db,
+        event_type="deployment.logs_read",
+        actor=user,
+        target_type="deployment",
+        target_id=deployment_id,
+        summary={"tail": safe_tail},
     )
     return templates.TemplateResponse(
         request,
@@ -234,6 +307,7 @@ def redeploy_submit_page(
     deployment_id: int,
     background_tasks: BackgroundTasks,
     db: DbSession,
+    user: OperatorUser,
     password: Annotated[str, Form()],
     name: Annotated[str, Form()],
     container_name: Annotated[str, Form()],
@@ -266,7 +340,24 @@ def redeploy_submit_page(
         )
     except redeploy_service.RedeployError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-    background_tasks.add_task(run_redeploy_task, job.id, password, payload.model_dump(), confirmed)
+    requested_config = payload.model_dump()
+    if not enqueue_job(
+        get_settings(),
+        JobType.redeployment.value,
+        job.id,
+        password,
+        requested_config=requested_config,
+        confirm_high_risk=confirmed,
+    ):
+        background_tasks.add_task(run_redeploy_task, job.id, password, requested_config, confirmed)
+    _audit_page_event(
+        db,
+        event_type="deployment.redeploy",
+        actor=user,
+        target_type="deployment",
+        target_id=deployment_id,
+        summary={"job_id": job.id, "confirm_high_risk": confirmed},
+    )
     return _redirect(f"/jobs/{job.id}")
 
 
@@ -320,6 +411,7 @@ def new_host_page(request: Request) -> HTMLResponse:
 @router.post("/hosts")
 def create_host_page(
     db: DbSession,
+    user: OperatorUser,
     name: Annotated[str, Form()],
     ip: Annotated[str, Form()],
     ssh_port: Annotated[int, Form()] = 22,
@@ -337,6 +429,14 @@ def create_host_page(
             tags=tags,
             note=note,
         ),
+    )
+    _audit_page_event(
+        db,
+        event_type="host.create",
+        actor=user,
+        target_type="host",
+        target_id=host.id,
+        summary={"name": host.name, "ip": host.ip},
     )
     return _redirect(f"/hosts/{host.id}")
 
@@ -361,6 +461,7 @@ def edit_host_page(host_id: int, request: Request, db: DbSession) -> HTMLRespons
 def update_host_page(
     host_id: int,
     db: DbSession,
+    user: OperatorUser,
     name: Annotated[str, Form()],
     ip: Annotated[str, Form()],
     ssh_port: Annotated[int, Form()],
@@ -383,14 +484,30 @@ def update_host_page(
             note=note,
         ),
     )
+    _audit_page_event(
+        db,
+        event_type="host.update",
+        actor=user,
+        target_type="host",
+        target_id=host_id,
+        summary={"name": name, "ip": ip},
+    )
     return _redirect(f"/hosts/{host_id}")
 
 
 @router.post("/hosts/{host_id}/delete")
-def delete_host_page(host_id: int, db: DbSession) -> RedirectResponse:
+def delete_host_page(host_id: int, db: DbSession, user: OperatorUser) -> RedirectResponse:
     host = host_service.get_host(db, host_id)
     if host is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Host not found")
+    _audit_page_event(
+        db,
+        event_type="host.delete",
+        actor=user,
+        target_type="host",
+        target_id=host_id,
+        summary={"name": host.name, "ip": host.ip},
+    )
     host_service.delete_host(db, host)
     return _redirect("/hosts")
 
@@ -400,13 +517,23 @@ def ssh_check_page(
     host_id: int,
     background_tasks: BackgroundTasks,
     db: DbSession,
+    user: OperatorUser,
     password: Annotated[str, Form()],
 ) -> RedirectResponse:
     host = host_service.get_host(db, host_id)
     if host is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Host not found")
     job = job_service.create_job(db, target_id=host_id)
-    background_tasks.add_task(run_ssh_connect_check_task, job.id, password)
+    if not enqueue_job(get_settings(), JobType.ssh_connect_check.value, job.id, password):
+        background_tasks.add_task(run_ssh_connect_check_task, job.id, password)
+    _audit_page_event(
+        db,
+        event_type="host.ssh_check",
+        actor=user,
+        target_type="host",
+        target_id=host_id,
+        summary={"job_id": job.id},
+    )
     return _redirect(f"/jobs/{job.id}")
 
 
@@ -415,13 +542,23 @@ def environment_check_page(
     host_id: int,
     background_tasks: BackgroundTasks,
     db: DbSession,
+    user: OperatorUser,
     password: Annotated[str, Form()],
 ) -> RedirectResponse:
     host = host_service.get_host(db, host_id)
     if host is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Host not found")
     job = job_service.create_job(db, target_id=host_id, job_type=JobType.environment_check)
-    background_tasks.add_task(run_environment_check_task, job.id, password)
+    if not enqueue_job(get_settings(), JobType.environment_check.value, job.id, password):
+        background_tasks.add_task(run_environment_check_task, job.id, password)
+    _audit_page_event(
+        db,
+        event_type="host.environment_check",
+        actor=user,
+        target_type="host",
+        target_id=host_id,
+        summary={"job_id": job.id},
+    )
     return _redirect(f"/jobs/{job.id}")
 
 
@@ -430,6 +567,7 @@ def confirm_install_page(
     job_id: int,
     background_tasks: BackgroundTasks,
     db: DbSession,
+    user: OperatorUser,
     password: Annotated[str, Form()],
     confirmed: Annotated[str | None, Form()] = None,
 ) -> RedirectResponse:
@@ -451,7 +589,16 @@ def confirm_install_page(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Confirmation is required",
         )
-    background_tasks.add_task(confirm_environment_install_task, job.id, password, True)
+    if not enqueue_job(get_settings(), "environment_install", job.id, password):
+        background_tasks.add_task(confirm_environment_install_task, job.id, password, True)
+    _audit_page_event(
+        db,
+        event_type="host.environment_install",
+        actor=user,
+        target_type="job",
+        target_id=job_id,
+        summary={"confirmed": True},
+    )
     return _redirect(f"/jobs/{job.id}")
 
 
@@ -468,6 +615,7 @@ def monitoring_page(request: Request, db: DbSession) -> HTMLResponse:
 def monitoring_submit_page(
     request: Request,
     db: DbSession,
+    user: OperatorUser,
     prometheus_base_url: Annotated[str | None, Form()] = None,
     grafana_base_url: Annotated[str | None, Form()] = None,
     default_dashboard_path: Annotated[str | None, Form()] = None,
@@ -488,6 +636,17 @@ def monitoring_submit_page(
             {"config": monitoring_service.get_config(db), "error": str(exc)},
             status_code=status.HTTP_400_BAD_REQUEST,
         )
+    _audit_page_event(
+        db,
+        event_type="monitoring.config_update",
+        actor=user,
+        target_type="monitoring_config",
+        target_id="default",
+        summary={
+            "prometheus_base_url": prometheus_base_url,
+            "grafana_base_url": grafana_base_url,
+        },
+    )
     return _redirect("/monitoring")
 
 
@@ -496,6 +655,7 @@ def retry_job_page(
     job_id: int,
     background_tasks: BackgroundTasks,
     db: DbSession,
+    user: OperatorUser,
     password: Annotated[str, Form()],
 ) -> RedirectResponse:
     job = job_service.get_job(db, job_id)
@@ -507,7 +667,16 @@ def retry_job_page(
             detail="Only environment check jobs can be retried",
         )
     job_service.reset_for_retry(db, job)
-    background_tasks.add_task(run_environment_check_task, job.id, password)
+    if not enqueue_job(get_settings(), JobType.environment_check.value, job.id, password):
+        background_tasks.add_task(run_environment_check_task, job.id, password)
+    _audit_page_event(
+        db,
+        event_type="job.retry",
+        actor=user,
+        target_type="job",
+        target_id=job_id,
+        summary={"job_id": job.id},
+    )
     return _redirect(f"/jobs/{job.id}")
 
 

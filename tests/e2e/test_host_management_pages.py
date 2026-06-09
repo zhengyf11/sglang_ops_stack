@@ -18,8 +18,8 @@ def test_host_management_pages(client: TestClient) -> None:
     detail = client.get(detail_url)
     assert detail.status_code == 200
     assert "gpu-1" in detail.text
-    assert "type=\"password\"" in detail.text
-    assert "value=\"" not in detail.text.split("type=\"password\"")[1].split(">", 1)[0]
+    assert 'type="password"' in detail.text
+    assert 'value="' not in detail.text.split('type="password"')[1].split(">", 1)[0]
 
     edit_url = f"{detail_url}/edit"
     assert client.get(edit_url).status_code == 200

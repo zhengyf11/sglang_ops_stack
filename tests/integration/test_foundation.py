@@ -6,7 +6,7 @@ def test_dashboard_home_page_links_to_existing_hosts_page(client: TestClient) ->
 
     assert response.status_code == 200
     assert "Dashboard" in response.text
-    assert "href=\"/hosts\"" in response.text
+    assert 'href="/hosts"' in response.text
     assert "Hosts" in response.text
 
 

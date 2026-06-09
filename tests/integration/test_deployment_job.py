@@ -119,7 +119,7 @@ def test_deployment_job_failure_writes_masked_job_logs(db_session: Session) -> N
             image="lmsysorg/sglang:latest",
             model_path="/models/private-secret-model",
             docker_config=DockerConfig(
-                env={"HF_TOKEN": "secret-token"},
+                env={"MODEL_ALIAS": "secret-token"},
                 volumes=[
                     DockerVolume(host_path="/host/private", container_path="/models", mode="ro")
                 ],

@@ -8,6 +8,7 @@ from sglang_ops_stack.utils.masking import mask_secret
 _CONTAINER_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.-]+$")
 _IMAGE_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._:/@-]{0,511}$")
 _ALLOWED_DOCKER_VOLUME_MODES = {"ro", "rw"}
+_SHELL_META_RE = re.compile(r"[;&|$`]")
 _ALLOWED_SGLANG_EXTRA_ARGS = {
     "context_length",
     "max_running_requests",
@@ -15,6 +16,15 @@ _ALLOWED_SGLANG_EXTRA_ARGS = {
     "chunked_prefill_size",
 }
 _ALLOWED_SGLANG_ADVANCED = {"trust_remote_code", "enable_cache_report", "enable_metrics"}
+_SECRET_LIKE_ENV_KEY_RE = re.compile(
+    r"(^|_)(token|secret|password|passwd|pwd|api_?key|private_?key|access_?key|client_?secret)($|_)",
+    re.IGNORECASE,
+)
+
+
+def _is_secret_like_key(key: object) -> bool:
+    normalized = re.sub(r"[^a-zA-Z0-9]+", "_", str(key)).strip("_")
+    return bool(_SECRET_LIKE_ENV_KEY_RE.search(normalized))
 
 
 class DockerVolume(BaseModel):
@@ -27,8 +37,16 @@ class DockerVolume(BaseModel):
     @field_validator("host_path", "container_path")
     @classmethod
     def reject_volume_shorthand(cls, value: str) -> str:
-        if value.startswith("-v") or "\x00" in value or "\n" in value or "\r" in value:
-            raise ValueError("volume paths must be structured single-line values, not -v strings")
+        if (
+            value.startswith("-v")
+            or "\x00" in value
+            or "\n" in value
+            or "\r" in value
+            or _SHELL_META_RE.search(value)
+        ):
+            raise ValueError(
+                "volume paths must be structured single-line values without shell metacharacters"
+            )
         return value
 
     @field_validator("mode")
@@ -57,7 +75,19 @@ class DockerConfig(BaseModel):
         for key, value in self.env.items():
             if key.startswith("-") or "\n" in key or "\n" in value:
                 raise ValueError("environment variables must be structured key/value strings")
+            if _is_secret_like_key(key):
+                raise ValueError(
+                    "docker_config.env must not contain secret-like keys; use an external "
+                    "secret store or opaque reference instead"
+                )
         return self
+
+    @field_validator("gpus", "network", "user", "ipc", "shm_size")
+    @classmethod
+    def reject_shell_payload_config_fields(cls, value: str | None) -> str | None:
+        if value is not None and _SHELL_META_RE.search(value):
+            raise ValueError("docker config string fields must not contain shell metacharacters")
+        return value
 
 
 class SGLangConfig(BaseModel):
@@ -154,6 +184,25 @@ class DeploymentRead(BaseModel):
     last_job_id: int | None
     last_error_code: str | None
     last_error_message: str | None
+
+    @model_validator(mode="after")
+    def redact_sensitive_read_fields(self) -> "DeploymentRead":
+        secrets = _collect_config_secrets(
+            {
+                "model_path": self.model_path,
+                "docker_config": self.docker_config,
+                "sglang_config": self.sglang_config,
+                "last_health_status": self.last_health_status,
+                "last_error_message": self.last_error_message,
+            }
+        )
+        self.docker_config = _mask_config_value(self.docker_config, secrets)
+        self.sglang_config = _mask_config_value(self.sglang_config, secrets)
+        self.last_command_preview = mask_secret(self.last_command_preview, secrets)
+        self.last_health_status = _mask_config_value(self.last_health_status, secrets)
+        self.last_error_message = mask_secret(self.last_error_message, secrets)
+        self.model_path = mask_secret(self.model_path, secrets)
+        return self
 
 
 class DeployRequest(BaseModel):
